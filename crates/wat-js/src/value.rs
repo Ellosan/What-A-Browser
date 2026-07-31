@@ -35,6 +35,15 @@ pub trait HostObject {
     /// A stable identity, so two handles to the same underlying thing compare
     /// equal with `===`.
     fn identity(&self) -> usize;
+
+    /// Lets a host recover its own concrete type from a handle it is given.
+    ///
+    /// A DOM method such as `appendChild` receives its argument as a [`Value`]
+    /// and needs the node behind it; implementing this as `Some(self)` is what
+    /// makes that possible without the engine knowing anything about nodes.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// A property reached through an object or its prototypes.

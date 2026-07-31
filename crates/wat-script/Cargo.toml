@@ -1,0 +1,15 @@
+[package]
+name = "wat-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "DOM bindings that let WAT's JavaScript engine drive a page"
+
+[dependencies]
+wat-css.workspace = true
+wat-dom.workspace = true
+wat-html.workspace = true
+wat-js.workspace = true
+log.workspace = true

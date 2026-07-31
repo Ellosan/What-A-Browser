@@ -2514,6 +2514,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wat-script"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "wat-css",
+ "wat-dom",
+ "wat-html",
+ "wat-js",
+]
+
+[[package]]
 name = "wat-shell"
 version = "0.1.0"
 dependencies = [

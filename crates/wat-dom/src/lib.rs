@@ -238,6 +238,29 @@ impl Document {
         self.node_mut(parent).last_child = Some(child);
     }
 
+    /// Inserts `child` immediately before `reference`.
+    ///
+    /// Does nothing if `reference` has no parent. Panics if `child` is already
+    /// attached; detach it first.
+    pub fn insert_before(&mut self, reference: NodeId, child: NodeId) {
+        debug_assert!(self.node(child).parent.is_none(), "child already attached");
+        debug_assert_ne!(reference, child, "cannot insert a node before itself");
+
+        let Some(parent) = self.node(reference).parent else {
+            return;
+        };
+        let previous = self.node(reference).prev_sibling;
+        self.node_mut(child).parent = Some(parent);
+        self.node_mut(child).prev_sibling = previous;
+        self.node_mut(child).next_sibling = Some(reference);
+        self.node_mut(reference).prev_sibling = Some(child);
+
+        match previous {
+            Some(previous) => self.node_mut(previous).next_sibling = Some(child),
+            None => self.node_mut(parent).first_child = Some(child),
+        }
+    }
+
     /// Removes `id` from its parent, keeping its own subtree intact.
     pub fn detach(&mut self, id: NodeId) {
         let (parent, prev, next) = {
@@ -425,6 +448,40 @@ mod tests {
         assert_eq!(doc.node(second).prev_sibling, None);
         assert_eq!(doc.node(body).first_child, Some(second));
         assert_eq!(doc.node(body).last_child, Some(second));
+    }
+
+    #[test]
+    fn insert_before_links_both_sides() {
+        let (mut doc, body, p) = sample();
+        let last = doc.create_element("span");
+        doc.append(body, last);
+
+        // In the middle.
+        let middle = doc.create_element("b");
+        doc.insert_before(last, middle);
+        assert_eq!(
+            doc.children(body).collect::<Vec<_>>(),
+            vec![p, middle, last]
+        );
+        assert_eq!(doc.node(middle).prev_sibling, Some(p));
+        assert_eq!(doc.node(last).prev_sibling, Some(middle));
+
+        // At the front, which has to move the parent's first child.
+        let first = doc.create_element("i");
+        doc.insert_before(p, first);
+        assert_eq!(doc.node(body).first_child, Some(first));
+        assert_eq!(doc.node(first).prev_sibling, None);
+        assert_eq!(doc.node(p).prev_sibling, Some(first));
+        assert_eq!(doc.node(body).last_child, Some(last));
+    }
+
+    #[test]
+    fn insert_before_a_detached_reference_does_nothing() {
+        let (mut doc, _, p) = sample();
+        doc.detach(p);
+        let orphan = doc.create_element("span");
+        doc.insert_before(p, orphan);
+        assert_eq!(doc.node(orphan).parent, None);
     }
 
     #[test]
