@@ -1,0 +1,14 @@
+[package]
+name = "wat-net"
+description = "URL handling and resource loading for the WAT web engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+url.workspace = true
+ureq.workspace = true
+log.workspace = true

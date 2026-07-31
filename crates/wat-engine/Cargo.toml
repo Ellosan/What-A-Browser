@@ -1,0 +1,24 @@
+[package]
+name = "wat-engine"
+description = "The WAT web engine: fetch, parse, style, layout, paint, and tab management"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wat-css.workspace = true
+wat-dom.workspace = true
+wat-html.workspace = true
+wat-layout.workspace = true
+wat-net.workspace = true
+wat-paint.workspace = true
+wat-style.workspace = true
+wat-text.workspace = true
+wat-theme.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+image.workspace = true

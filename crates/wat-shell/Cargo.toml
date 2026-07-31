@@ -1,0 +1,31 @@
+[package]
+name = "wat-shell"
+description = "Window shell for What-A-Browser: desktop and mobile entry points"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["window"]
+# Windowing can be switched off for headless builds; the CLI still works.
+window = ["winit", "softbuffer"]
+
+[dependencies]
+wat-css.workspace = true
+wat-engine.workspace = true
+wat-layout.workspace = true
+wat-net.workspace = true
+wat-paint.workspace = true
+wat-style.workspace = true
+wat-text.workspace = true
+wat-theme.workspace = true
+wat-ui.workspace = true
+log.workspace = true
+winit = { workspace = true, optional = true }
+softbuffer = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, optional = true, features = ["android-native-activity"] }

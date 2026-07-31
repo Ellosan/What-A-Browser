@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wat-dom",
+    "crates/wat-html",
+    "crates/wat-css",
+    "crates/wat-style",
+    "crates/wat-text",
+    "crates/wat-layout",
+    "crates/wat-paint",
+    "crates/wat-net",
+    "crates/wat-engine",
+    "crates/wat-theme",
+    "crates/wat-ui",
+    "crates/wat-shell",
+    "crates/wat-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT"
+repository = "https://github.com/ellosan/what-a-browser"
+authors = ["What-A-Browser contributors"]
+
+[workspace.dependencies]
+wat-dom = { path = "crates/wat-dom", version = "0.1.0" }
+wat-html = { path = "crates/wat-html", version = "0.1.0" }
+wat-css = { path = "crates/wat-css", version = "0.1.0" }
+wat-style = { path = "crates/wat-style", version = "0.1.0" }
+wat-text = { path = "crates/wat-text", version = "0.1.0" }
+wat-layout = { path = "crates/wat-layout", version = "0.1.0" }
+wat-paint = { path = "crates/wat-paint", version = "0.1.0" }
+wat-net = { path = "crates/wat-net", version = "0.1.0" }
+wat-engine = { path = "crates/wat-engine", version = "0.1.0" }
+wat-theme = { path = "crates/wat-theme", version = "0.1.0" }
+wat-ui = { path = "crates/wat-ui", version = "0.1.0" }
+wat-shell = { path = "crates/wat-shell", version = "0.1.0" }
+
+tiny-skia = "0.11"
+fontdb = { version = "0.23", default-features = false, features = ["fs", "std"] }
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+url = "2"
+ureq = { version = "2.12", default-features = false, features = ["tls", "gzip", "native-certs", "socks-proxy"] }
+log = "0.4"
+env_logger = "0.11"
+winit = "0.30"
+softbuffer = "0.4"
+dirs = "5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1

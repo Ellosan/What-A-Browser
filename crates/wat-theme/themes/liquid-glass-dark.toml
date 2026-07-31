@@ -1,0 +1,6 @@
+# Liquid Glass, pinned to its dark variant.
+#
+# Only the fields listed here differ from the built-in Liquid Glass values.
+
+name = "Liquid Glass Dark"
+appearance = "dark"
