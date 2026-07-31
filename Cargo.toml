@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/wat-dom",
     "crates/wat-html",
+    "crates/wat-js",
     "crates/wat-css",
     "crates/wat-style",
     "crates/wat-text",
@@ -27,6 +28,7 @@ authors = ["What-A-Browser contributors"]
 [workspace.dependencies]
 wat-dom = { path = "crates/wat-dom", version = "0.1.0" }
 wat-html = { path = "crates/wat-html", version = "0.1.0" }
+wat-js = { path = "crates/wat-js", version = "0.1.0" }
 wat-css = { path = "crates/wat-css", version = "0.1.0" }
 wat-style = { path = "crates/wat-style", version = "0.1.0" }
 wat-text = { path = "crates/wat-text", version = "0.1.0" }
