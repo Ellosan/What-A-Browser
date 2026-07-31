@@ -227,12 +227,65 @@ impl Browser {
 
     pub fn pointer_up(&mut self, point: Point) {
         self.pointer = Some(point);
-        let link = self.link_under_pointer();
+        let mut link = self.link_under_pointer();
+
+        // The page sees the click before the browser acts on it. A script may
+        // handle it and call `preventDefault`, in which case the link is not
+        // followed — which is how a single-page app works at all.
+        let content = self.chrome.content_rect();
+        if content.contains(point) {
+            let local = Point::new(point.x - content.x, point.y - content.y);
+            if let Some(tab) = self.session.active_mut() {
+                if tab.page.dispatch_click_at(local) {
+                    link = None;
+                }
+            }
+            self.needs_redraw = true;
+            self.follow_script_navigation();
+        }
+
         let action = self.chrome.pointer_up(point, link.as_deref());
         self.needs_redraw = true;
         if let Some(action) = action {
             self.apply(action);
         }
+    }
+
+    /// Goes wherever a script asked to go.
+    fn follow_script_navigation(&mut self) {
+        let request = self
+            .session
+            .active_mut()
+            .and_then(|tab| tab.page.take_script_navigation());
+        if let Some(request) = request {
+            self.apply(UiAction::OpenUrl(request.url));
+        }
+    }
+
+    /// Runs any timer callbacks that scripts have queued.
+    ///
+    /// The shell calls this from its event loop, which is what keeps a page's
+    /// `setTimeout` work on the same thread as everything else.
+    pub fn run_script_timers(&mut self) {
+        let ran = match self.session.active_mut() {
+            Some(tab) if tab.page.has_timers() => {
+                tab.page.run_timers();
+                true
+            }
+            _ => false,
+        };
+        if ran {
+            self.needs_redraw = true;
+            self.follow_script_navigation();
+        }
+    }
+
+    /// Whether a page is waiting on a timer, so the shell knows to keep pumping
+    /// instead of going idle.
+    pub fn has_pending_script_work(&self) -> bool {
+        self.session
+            .active()
+            .is_some_and(|tab| tab.page.has_timers())
     }
 
     pub fn middle_click(&mut self, point: Point) {

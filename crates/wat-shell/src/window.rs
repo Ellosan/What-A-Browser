@@ -166,6 +166,23 @@ impl ApplicationHandler for App {
         self.request_redraw();
     }
 
+    /// Runs the page's queued timer callbacks between events.
+    ///
+    /// A page with a pending timer keeps the loop polling; an idle page goes
+    /// back to waiting, so a window that is doing nothing costs nothing.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.browser.has_pending_script_work() {
+            self.browser.run_script_timers();
+            self.sync_title();
+            self.request_redraw();
+        }
+        event_loop.set_control_flow(if self.browser.has_pending_script_work() {
+            ControlFlow::Poll
+        } else {
+            ControlFlow::Wait
+        });
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),

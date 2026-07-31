@@ -10,6 +10,7 @@ use wat_layout::geom::{Point, Rect, Size2D};
 use wat_layout::{layout_document, ImageProvider, LayoutContext, LayoutTree};
 use wat_net::{resolve, Address, AddressKind, LoadError, Loader};
 use wat_paint::{build_display_list, DisplayList, ImageSource, PaintOptions, RasterImage};
+use wat_script::{Navigation, Rect as ScriptRect, ScriptError, ScriptRuntime};
 use wat_style::{StyleEngine, StyleTree};
 use wat_text::FontStore;
 use wat_theme::ResolvedTheme;
@@ -78,6 +79,15 @@ pub struct Page {
     coarse_pointer: bool,
     scroll: Point,
     hover: Option<NodeId>,
+
+    /// The page's JavaScript runtime. `None` when scripting is switched off,
+    /// which is what makes a scriptless build a configuration rather than a
+    /// different code path.
+    scripts: Option<ScriptRuntime>,
+    /// Scripts that failed, for the host to report.
+    script_errors: Vec<ScriptError>,
+    /// A navigation a script asked for, waiting for the browser to act on it.
+    pending_navigation: Option<Navigation>,
 }
 
 impl Page {
@@ -107,6 +117,9 @@ impl Page {
             coarse_pointer,
             scroll: Point::ZERO,
             hover: None,
+            scripts: Some(ScriptRuntime::new(address.url())),
+            script_errors: Vec::new(),
+            pending_navigation: None,
         };
 
         match page.fetch_document(&address, loader) {
@@ -130,6 +143,7 @@ impl Page {
         page.restyle();
         page.load_background_images(loader);
         page.relayout();
+        page.run_scripts(loader);
         page
     }
 
@@ -144,7 +158,8 @@ impl Page {
     ) -> Page {
         let loader = wat_net::OfflineLoader;
         let mut document = wat_html::parse(html);
-        document.base_url = Some(address.url().to_string());
+        let location = address.url().to_string();
+        document.base_url = Some(location.clone());
         let mut page = Page {
             address,
             title: document.title(),
@@ -162,10 +177,14 @@ impl Page {
             coarse_pointer: false,
             scroll: Point::ZERO,
             hover: None,
+            scripts: Some(ScriptRuntime::new(&location)),
+            script_errors: Vec::new(),
+            pending_navigation: None,
         };
         page.collect_stylesheets(&loader);
         page.restyle();
         page.relayout();
+        page.run_scripts(&loader);
         page
     }
 
@@ -421,6 +440,241 @@ impl Page {
             active: None,
             focus: None,
             target,
+        }
+    }
+
+    // ---- scripting --------------------------------------------------------
+
+    /// Turns scripting off, or back on, for this page.
+    ///
+    /// Switching it off drops the runtime, so a page that was already running
+    /// loses its listeners and timers — which is the point.
+    pub fn set_scripting_enabled(&mut self, enabled: bool) {
+        match (enabled, self.scripts.is_some()) {
+            (true, false) => self.scripts = Some(ScriptRuntime::new(self.address.url())),
+            (false, true) => self.scripts = None,
+            _ => {}
+        }
+    }
+
+    pub fn scripting_enabled(&self) -> bool {
+        self.scripts.is_some()
+    }
+
+    /// Runs the document's scripts and applies whatever they changed.
+    ///
+    /// External scripts are fetched here and their bodies put in as the
+    /// element's text, so the runtime only ever deals with source it can see.
+    pub fn run_scripts(&mut self, loader: &dyn Loader) {
+        if self.scripts.is_none() {
+            return;
+        }
+        self.fetch_external_scripts(loader);
+        self.publish_script_state();
+
+        let Page {
+            scripts: Some(scripts),
+            document,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let mut errors = scripts.run_document_scripts(document);
+        let load = scripts.dispatch_load(document);
+        errors.extend(load.errors);
+
+        self.script_errors = errors;
+        self.apply_script_effects();
+    }
+
+    /// Fires an event at a node and applies whatever the handlers changed.
+    ///
+    /// Returns whether a handler called `preventDefault`, which is how the shell
+    /// knows not to follow a link the page has taken over.
+    pub fn dispatch_event(&mut self, node: NodeId, kind: &str) -> bool {
+        self.publish_script_state();
+        let Page {
+            scripts: Some(scripts),
+            document,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        let outcome = scripts.dispatch(document, node, kind);
+        self.script_errors = outcome.errors;
+        self.apply_script_effects();
+        outcome.default_prevented
+    }
+
+    /// Fires a click at whatever is under `point`, if anything is.
+    pub fn dispatch_click_at(&mut self, point: Point) -> bool {
+        match self.node_at(point) {
+            Some(node) => self.dispatch_event(node, "click"),
+            None => false,
+        }
+    }
+
+    /// Runs the callbacks queued by `setTimeout` and applies what they changed.
+    pub fn run_timers(&mut self) {
+        if !self.has_timers() {
+            return;
+        }
+        self.publish_script_state();
+        let Page {
+            scripts: Some(scripts),
+            document,
+            ..
+        } = self
+        else {
+            return;
+        };
+        self.script_errors = scripts.run_timers(document);
+        self.apply_script_effects();
+    }
+
+    /// Whether a script is waiting on a timer, so the shell knows to keep
+    /// pumping rather than going idle.
+    pub fn has_timers(&self) -> bool {
+        self.scripts.as_ref().is_some_and(ScriptRuntime::has_timers)
+    }
+
+    /// Tells the runtime where things are and how big the window is, so
+    /// `getBoundingClientRect` and `window.innerWidth` are not guesses.
+    fn publish_script_state(&mut self) {
+        let Some(scripts) = self.scripts.as_mut() else {
+            return;
+        };
+        scripts.set_viewport(self.viewport.width, self.viewport.height);
+        scripts.set_scroll(self.scroll.x, self.scroll.y);
+        scripts.set_location(self.address.url());
+
+        let mut rects = HashMap::new();
+        for index in self.layout.preorder() {
+            let layout_box = self.layout.get(index);
+            let Some(node) = layout_box.node else {
+                continue;
+            };
+            // Viewport coordinates, and the outermost box wins: an inline
+            // element can have several fragments, and a page asking for its
+            // rectangle means the first one.
+            let rect = layout_box.rect;
+            rects.entry(node).or_insert(ScriptRect {
+                x: rect.x - self.scroll.x,
+                y: rect.y - self.scroll.y,
+                width: rect.width,
+                height: rect.height,
+            });
+        }
+        scripts.set_rects(rects);
+    }
+
+    /// Redoes whatever the scripts invalidated.
+    fn apply_script_effects(&mut self) {
+        let Some(scripts) = self.scripts.as_mut() else {
+            return;
+        };
+        let dirty = scripts.take_dirty();
+        let title_changed = scripts.take_title_changed();
+        let navigation = scripts.take_navigation();
+        let scroll = scripts.take_scroll();
+
+        if dirty {
+            // A script can add a <style> element or change a `media` attribute,
+            // so the stylesheets are re-collected rather than reused.
+            self.collect_stylesheets(&wat_net::OfflineLoader);
+            self.restyle();
+            self.relayout();
+        }
+        if title_changed || dirty {
+            self.title = self.document.title();
+        }
+        if let Some((_, y)) = scroll {
+            self.scroll_to(y);
+        }
+        if navigation.is_some() {
+            self.pending_navigation = navigation;
+        }
+    }
+
+    /// A navigation a script asked for, taken so it happens only once.
+    pub fn take_script_navigation(&mut self) -> Option<Navigation> {
+        self.pending_navigation.take()
+    }
+
+    /// Scripts that failed since the last time this was called.
+    pub fn take_script_errors(&mut self) -> Vec<ScriptError> {
+        std::mem::take(&mut self.script_errors)
+    }
+
+    /// Everything the page logged, oldest first.
+    pub fn console(&self) -> &[wat_js::ConsoleMessage] {
+        match &self.scripts {
+            Some(scripts) => scripts.console(),
+            None => &[],
+        }
+    }
+
+    /// Runs one expression against this page, which is what a developer console
+    /// would do.
+    pub fn eval(&mut self, source: &str) -> Result<String, String> {
+        self.publish_script_state();
+        let Page {
+            scripts: Some(scripts),
+            document,
+            ..
+        } = self
+        else {
+            return Err("scripting is switched off for this page".to_string());
+        };
+        let result = scripts
+            .eval(document, source)
+            .map(|value| wat_js::inspect(&value))
+            .map_err(|error| error.message);
+        self.apply_script_effects();
+        result
+    }
+
+    /// Replaces the text of every `<script src>` with the fetched body.
+    fn fetch_external_scripts(&mut self, loader: &dyn Loader) {
+        let base = self.document.base_url.clone();
+        let nodes: Vec<NodeId> = self.document.descendants(self.document.root()).collect();
+        for node in nodes {
+            let Some(element) = self.document.element(node) else {
+                continue;
+            };
+            if element.name != "script" {
+                continue;
+            }
+            let Some(src) = element.attr("src").map(str::to_string) else {
+                continue;
+            };
+            if src.trim().is_empty() {
+                continue;
+            }
+            let Some(url) = resolve(base.as_deref(), &src) else {
+                continue;
+            };
+            let Ok(address) = Address::parse(&url) else {
+                continue;
+            };
+            match loader.load(&address) {
+                Ok(resource) => {
+                    let source = resource.text();
+                    let text = self.document.create_text(source);
+                    // The element's own children are replaced, since a script
+                    // with a `src` ignores its inline text anyway.
+                    let existing: Vec<NodeId> = self.document.children(node).collect();
+                    for child in existing {
+                        self.document.detach(child);
+                    }
+                    self.document.append(node, text);
+                }
+                Err(error) => {
+                    log::warn!("could not load script {url}: {error}");
+                }
+            }
         }
     }
 
@@ -715,6 +969,247 @@ mod tests {
         assert_eq!(page.title.as_deref(), Some("Hi"));
         assert!(page.error.is_none());
         assert!(!page.display_list().is_empty());
+    }
+
+    #[test]
+    fn a_page_script_runs_and_the_page_is_laid_out_again() {
+        let page = page_from(
+            "<p id='out'>before</p><script>document.getElementById('out').textContent = 'after'</script>",
+        );
+        let node = page.document().query("#out").unwrap();
+        assert_eq!(page.document().text_content(node), "after");
+        // The change went through the whole pipeline, not just the tree: the
+        // paragraph has a box, and the display list has something in it.
+        assert!(page.layout_tree().box_for_node(node).is_some());
+        assert!(!page.display_list().is_empty());
+    }
+
+    #[test]
+    fn a_script_that_adds_elements_gets_them_laid_out() {
+        let page = page_from(
+            "<div id='host'></div>
+             <script>
+               for (let i = 0; i < 3; i++) {
+                 const p = document.createElement('p');
+                 p.textContent = 'row ' + i;
+                 document.getElementById('host').appendChild(p);
+               }
+             </script>",
+        );
+        let host = page.document().query("#host").unwrap();
+        assert_eq!(page.document().element_children(host).count(), 3);
+        for child in page.document().element_children(host) {
+            let index = page
+                .layout_tree()
+                .box_for_node(child)
+                .expect("every new element needs a box");
+            assert!(
+                page.layout_tree().get(index).rect.height > 0.0,
+                "and a height"
+            );
+        }
+    }
+
+    #[test]
+    fn a_script_that_changes_a_class_is_restyled() {
+        let page = page_from(
+            "<style>.on { color: rgb(1, 2, 3) }</style>
+             <p id='p'>x</p>
+             <script>document.getElementById('p').className = 'on'</script>",
+        );
+        let node = page.document().query("#p").unwrap();
+        let color = page.styles().get(node).color;
+        assert_eq!((color.r, color.g, color.b), (1, 2, 3));
+    }
+
+    #[test]
+    fn a_script_that_adds_a_style_element_is_picked_up() {
+        let page = page_from(
+            "<p id='p'>x</p>
+             <script>
+               const style = document.createElement('style');
+               style.textContent = '#p { color: rgb(4, 5, 6) }';
+               document.body.appendChild(style);
+             </script>",
+        );
+        let node = page.document().query("#p").unwrap();
+        let color = page.styles().get(node).color;
+        assert_eq!((color.r, color.g, color.b), (4, 5, 6));
+    }
+
+    #[test]
+    fn a_script_can_set_the_title() {
+        let page = page_from("<title>old</title><script>document.title = 'new'</script>");
+        assert_eq!(page.title.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn a_failing_script_leaves_the_page_usable() {
+        let mut page = page_from("<p>still here</p><script>oops.missing()</script>");
+        let errors = page.take_script_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(page.document().query("p").is_some());
+        assert!(!page.display_list().is_empty());
+        assert!(
+            page.take_script_errors().is_empty(),
+            "the errors are drained"
+        );
+    }
+
+    #[test]
+    fn a_runaway_script_does_not_hang_the_page() {
+        let mut page = page_from("<p>fine</p><script>while (true) {}</script>");
+        let errors = page.take_script_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].fatal, "{errors:?}");
+        assert!(!page.display_list().is_empty(), "the page still renders");
+    }
+
+    #[test]
+    fn a_click_reaches_a_page_script() {
+        let mut page = page_from(
+            "<button id='b'>go</button>
+             <script>
+               document.getElementById('b').addEventListener('click', e => {
+                 e.target.textContent = 'clicked';
+               });
+             </script>",
+        );
+        let button = page.document().query("#b").unwrap();
+        assert!(
+            !page.dispatch_event(button, "click"),
+            "nothing was prevented"
+        );
+        assert_eq!(page.document().text_content(button), "clicked");
+    }
+
+    #[test]
+    fn a_script_can_take_over_a_link_click() {
+        let mut page = page_from(
+            "<a id='a' href='/next'>go</a>
+             <script>document.getElementById('a').addEventListener('click', e => e.preventDefault())</script>",
+        );
+        let link = page.document().query("#a").unwrap();
+        assert!(page.dispatch_event(link, "click"));
+    }
+
+    #[test]
+    fn a_click_can_be_aimed_at_a_point() {
+        let mut page = page_from(
+            "<p id='p'>x</p>
+             <script>
+               window.hits = 0;
+               document.getElementById('p').addEventListener('click', () => window.hits++);
+             </script>",
+        );
+        // The click lands on the text inside the paragraph and bubbles up to it,
+        // which is what makes a listener on a container work at all.
+        assert!(!page.dispatch_click_at(Point::new(20.0, 30.0)));
+        assert_eq!(page.eval("window.hits").unwrap(), "1");
+
+        // A click on empty space below the content reaches nothing.
+        page.dispatch_click_at(Point::new(700.0, 550.0));
+        assert_eq!(page.eval("window.hits").unwrap(), "1");
+    }
+
+    #[test]
+    fn a_script_can_read_where_things_are() {
+        let page = page_from(
+            "<div id='d' style='width: 120px; height: 40px'></div>
+             <script>
+               const rect = document.getElementById('d').getBoundingClientRect();
+               document.getElementById('d').setAttribute('data-size', rect.width + 'x' + rect.height);
+             </script>",
+        );
+        let node = page.document().query("#d").unwrap();
+        assert_eq!(
+            page.document().element(node).unwrap().attr("data-size"),
+            Some("120x40"),
+            "the script saw the real layout"
+        );
+    }
+
+    #[test]
+    fn timers_run_when_the_page_is_asked_to_run_them() {
+        let mut page = page_from(
+            "<p id='p'>before</p>
+             <script>setTimeout(() => { document.getElementById('p').textContent = 'after' }, 0)</script>",
+        );
+        let node = page.document().query("#p").unwrap();
+        assert!(page.has_timers());
+        page.run_timers();
+        assert_eq!(page.document().text_content(node), "after");
+        assert!(!page.has_timers());
+    }
+
+    #[test]
+    fn a_script_navigation_is_handed_to_the_browser() {
+        let mut page = page_from("<script>location.assign('/elsewhere')</script>");
+        let request = page.take_script_navigation().expect("a navigation");
+        assert_eq!(request.url, "/elsewhere");
+        assert!(page.take_script_navigation().is_none());
+    }
+
+    #[test]
+    fn an_external_script_is_fetched_and_run() {
+        let loader = StaticLoader::new()
+            .with_html(
+                "https://example.com/",
+                "<p id='p'>before</p><script src='/app.js'></script>",
+            )
+            .with(
+                "https://example.com/app.js",
+                Resource::new(
+                    "https://example.com/app.js",
+                    "text/javascript",
+                    b"document.getElementById('p').textContent = 'from the file'".to_vec(),
+                ),
+            );
+        let page = Page::load(
+            Address::parse("https://example.com/").unwrap(),
+            &loader,
+            fonts(),
+            theme(),
+            Size2D::new(800.0, 600.0),
+            false,
+        );
+        let node = page.document().query("#p").unwrap();
+        assert_eq!(page.document().text_content(node), "from the file");
+    }
+
+    #[test]
+    fn the_console_is_kept_for_the_host() {
+        let page = page_from("<script>console.log('page said this')</script>");
+        assert_eq!(page.console().len(), 1);
+        assert_eq!(page.console()[0].text, "page said this");
+    }
+
+    #[test]
+    fn scripting_can_be_switched_off() {
+        let mut page = page_from("<p id='p'>untouched</p>");
+        page.set_scripting_enabled(false);
+        assert!(!page.scripting_enabled());
+        page.run_scripts(&wat_net::OfflineLoader);
+        assert!(page.eval("1 + 1").is_err());
+        assert!(page.console().is_empty());
+
+        page.set_scripting_enabled(true);
+        assert_eq!(page.eval("1 + 1").unwrap(), "2");
+    }
+
+    #[test]
+    fn a_page_can_be_evaluated_against_like_a_console() {
+        let mut page = page_from("<p id='p'>text</p>");
+        assert_eq!(
+            page.eval("document.getElementById('p').textContent")
+                .unwrap(),
+            "text"
+        );
+        page.eval("document.getElementById('p').textContent = 'edited'")
+            .unwrap();
+        let node = page.document().query("#p").unwrap();
+        assert_eq!(page.document().text_content(node), "edited");
+        assert!(page.eval("this is not javascript").is_err());
     }
 
     #[test]

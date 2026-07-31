@@ -83,8 +83,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn starts_with_ignore_case(&self, prefix: &str) -> bool {
-        let rest = self.rest();
-        rest.len() >= prefix.len() && rest[..prefix.len()].eq_ignore_ascii_case(prefix)
+        // Compared byte by byte: slicing at `prefix.len()` would panic when the
+        // input has a multi-byte character straddling that boundary, which is
+        // exactly what an em dash right after a tag does.
+        let rest = self.rest().as_bytes();
+        rest.len() >= prefix.len() && rest[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
     }
 
     fn advance(&mut self, bytes: usize) {
@@ -430,6 +433,21 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn a_multi_byte_character_after_a_tag_does_not_panic() {
+        // `</code> — text` used to be sliced at a byte offset inside the em
+        // dash while looking ahead for `<!doctype`.
+        let tokens = tokenize("<p><code>a</code> — done</p>");
+        let text: String = tokens
+            .iter()
+            .filter_map(|token| match token {
+                Token::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "a — done");
     }
 
     #[test]
