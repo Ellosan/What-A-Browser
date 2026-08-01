@@ -85,6 +85,27 @@ primeorder = "=0.14.0-rc.14"
 This is upstream churn in a published dependency tree, not something wrong with
 the embedding. Expect it to stop being necessary.
 
+## Checking it works
+
+```sh
+cargo run --example render_once --manifest-path crates/wat-servo/Cargo.toml
+```
+
+Starts Servo, loads a page, pumps until a frame is composited, paints it into a
+WAT `Canvas` and writes `servo-frame.png`. It fails if no pixels arrive, which is
+the failure that matters: the backend type-checking against Servo's API says
+nothing about whether a frame ever reaches the canvas.
+
+Two things it needs on Linux that are easy to miss. Surfman loads `libEGL` even
+for the software context, so `libegl1` and `libgl1-mesa-dri` must be installed;
+and `XDG_RUNTIME_DIR` must be set, or Servo aborts before it starts.
+
+Two things about the paint path that this check is what caught. The context has
+to be told a frame is coming with `prepare_for_rendering`, and the frame must be
+read out of the back buffer *before* presenting — `present` swaps, so reading
+after it returns the buffer Servo did not just draw into. Getting either wrong
+produces a blank frame and no error.
+
 ## What the Servo backend does not do yet
 
 Honest list, because the trait has corners Servo answers differently:

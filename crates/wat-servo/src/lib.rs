@@ -433,8 +433,12 @@ impl Engine for ServoEngine {
         if area.is_empty() {
             return;
         }
+        // The context has to be told a frame is coming, and the frame must be
+        // read out of the back buffer *before* presenting: `present` swaps, and
+        // reading afterwards returns the buffer Servo did not just draw into.
+        // There is no window here, so nothing is presented at all.
+        self.context.prepare_for_rendering();
         tab.webview.paint();
-        self.context.present();
         tab.state.frame_ready.set(false);
 
         let width = (area.width * scale) as i32;
