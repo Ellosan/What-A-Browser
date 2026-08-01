@@ -131,6 +131,18 @@ evaluated per pixel:
 Everything is CPU-side. There is no GPU requirement, which is also why the
 headless CLI can produce byte-identical output to the window.
 
+## Device pixels
+
+Everything above the window works in CSS pixels: the chrome lays out in them,
+the page is laid out in them, and hit testing happens in them. The device pixel
+ratio is applied once, at the very end, by scaling the finished display list —
+`DisplayList::scaled` multiplies every length and every font size.
+
+Scaling the font size rather than the glyph bitmaps is the point: text is
+rasterized at the size it will actually be drawn, so a 3× phone gets sharp text
+rather than a magnified 1× frame. `wat shot --scale 3` renders the same way
+headlessly, which is how it is checked without a device.
+
 ## Theming
 
 `wat-theme` is data with no behaviour. A `Theme` carries shared geometry,

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The browser paints every pixel of its own interface, including the glass,
+      so the platform theme only has to get out of the way: no action bar, and a
+      background that matches the Liquid Glass page colour so there is no flash
+      of white before the first frame.
+    -->
+    <style name="Theme.Wat" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/launch_background</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:statusBarColor">@color/launch_background</item>
+        <item name="android:navigationBarColor">@color/launch_background</item>
+    </style>
+</resources>

@@ -16,7 +16,9 @@ pub mod glass;
 pub mod icons;
 pub mod omnibox;
 
-pub use compose::{page_viewport, render_window, render_window_into, window_display_list};
+pub use compose::{
+    page_viewport, render_window, render_window_into, render_window_scaled, window_display_list,
+};
 pub use glass::Elevation;
 pub use icons::Icon;
 pub use omnibox::Omnibox;
@@ -551,6 +553,14 @@ impl Chrome {
         let changed = pressed != self.pressed;
         self.pressed = pressed;
         changed
+    }
+
+    /// Abandons a press without acting on it.
+    ///
+    /// A finger that starts on a button and then scrolls away has not pressed
+    /// it, and the button must not stay lit.
+    pub fn cancel_press(&mut self) -> bool {
+        self.pressed.take().is_some()
     }
 
     /// Completes a click, producing an action if one is warranted.

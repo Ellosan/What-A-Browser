@@ -5,3 +5,10 @@
 # Images produced by `wat render` and `wat shot`
 /*.png
 !docs/images/*.png
+
+# Android build output
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/src/main/jniLibs/
+/android/local.properties

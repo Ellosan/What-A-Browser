@@ -55,14 +55,61 @@ struct App {
 }
 
 impl App {
-    /// The window size in logical pixels, which is what the chrome lays out in.
+    /// The display's device pixel ratio.
+    ///
+    /// A phone reports 2.5 to 3.5 here, and treating those pixels as CSS pixels
+    /// would draw the whole interface at a third of its intended size.
+    fn scale_factor(&self) -> f32 {
+        match &self.window {
+            Some(window) => {
+                let scale = window.scale_factor() as f32;
+                // A nonsensical value from a platform must not make the window
+                // unrenderable.
+                if scale.is_finite() && scale > 0.0 {
+                    scale.clamp(0.5, 8.0)
+                } else {
+                    1.0
+                }
+            }
+            None => 1.0,
+        }
+    }
+
+    /// The window size in CSS pixels, which is what the chrome lays out in.
     fn logical_size(&self) -> Size2D {
         match &self.window {
             Some(window) => {
                 let size = window.inner_size();
-                Size2D::new(size.width.max(1) as f32, size.height.max(1) as f32)
+                let scale = self.scale_factor();
+                Size2D::new(
+                    (size.width.max(1) as f32 / scale).max(1.0),
+                    (size.height.max(1) as f32 / scale).max(1.0),
+                )
             }
             None => self.config.size,
+        }
+    }
+
+    /// A position winit reported, in CSS pixels.
+    ///
+    /// winit works in device pixels; everything above this file works in CSS
+    /// pixels, so every incoming coordinate is divided once, here.
+    fn to_logical(&self, x: f64, y: f64) -> Point {
+        let scale = self.scale_factor();
+        Point::new(x as f32 / scale, y as f32 / scale)
+    }
+
+    /// The window size in device pixels, which is what the canvas holds.
+    fn physical_size(&self) -> (u32, u32) {
+        match &self.window {
+            Some(window) => {
+                let size = window.inner_size();
+                (size.width.max(1), size.height.max(1))
+            }
+            None => (
+                self.config.size.width.max(1.0) as u32,
+                self.config.size.height.max(1.0) as u32,
+            ),
         }
     }
 
@@ -93,10 +140,9 @@ impl App {
     }
 
     fn draw(&mut self) {
-        // The size is read before the surface is borrowed mutably.
-        let size = self.logical_size();
-        let width = size.width as u32;
-        let height = size.height as u32;
+        // The sizes are read before the surface is borrowed mutably.
+        let (width, height) = self.physical_size();
+        let scale = self.scale_factor();
         let (Some(nz_width), Some(nz_height)) = (NonZeroU32::new(width), NonZeroU32::new(height))
         else {
             return;
@@ -105,7 +151,8 @@ impl App {
         if self.canvas.width() != width || self.canvas.height() != height {
             self.canvas = Canvas::new(width, height);
         }
-        self.browser.render_into(&mut self.canvas);
+        // The canvas is in device pixels; everything above is in CSS pixels.
+        self.browser.render_into_scaled(&mut self.canvas, scale);
 
         let Some(surface) = &mut self.surface else {
             return;
@@ -201,8 +248,8 @@ impl ApplicationHandler for App {
                 };
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.browser
-                    .pointer_moved(Point::new(position.x as f32, position.y as f32));
+                let point = self.to_logical(position.x, position.y);
+                self.browser.pointer_moved(point);
                 self.sync_cursor();
                 if self.browser.needs_redraw {
                     self.request_redraw();
@@ -241,7 +288,11 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 let delta_y = match delta {
                     MouseScrollDelta::LineDelta(_, lines) => -lines_to_pixels(lines),
-                    MouseScrollDelta::PixelDelta(position) => -position.y as f32,
+                    // A pixel delta is in device pixels, like every other
+                    // position winit reports.
+                    MouseScrollDelta::PixelDelta(position) => {
+                        -(position.y as f32) / self.scale_factor()
+                    }
                 };
                 if let Some(position) = self.last_pointer() {
                     self.browser.scroll(position, delta_y);
@@ -251,15 +302,12 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Touch(touch) => {
-                let point = Point::new(touch.location.x as f32, touch.location.y as f32);
+                let point = self.to_logical(touch.location.x, touch.location.y);
                 match touch.phase {
-                    winit::event::TouchPhase::Started => {
-                        self.browser.pointer_moved(point);
-                        self.browser.pointer_down(point);
-                    }
-                    winit::event::TouchPhase::Moved => self.browser.pointer_moved(point),
-                    winit::event::TouchPhase::Ended => self.browser.pointer_up(point),
-                    winit::event::TouchPhase::Cancelled => self.browser.pointer_left(),
+                    winit::event::TouchPhase::Started => self.browser.touch_started(point),
+                    winit::event::TouchPhase::Moved => self.browser.touch_moved(point),
+                    winit::event::TouchPhase::Ended => self.browser.touch_ended(point),
+                    winit::event::TouchPhase::Cancelled => self.browser.touch_cancelled(),
                 }
                 self.sync_title();
                 self.request_redraw();
@@ -269,6 +317,19 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state != ElementState::Pressed {
+                    return;
+                }
+                // Android's back gesture arrives as a key. It means "go back",
+                // and only leaves the app when there is nowhere left to go —
+                // which is what every browser on the platform does.
+                if event.logical_key == WinitKey::Named(NamedKey::BrowserBack) {
+                    if self.browser.can_go_back() {
+                        self.browser.apply(wat_ui::UiAction::GoBack);
+                    } else {
+                        event_loop.exit();
+                    }
+                    self.sync_title();
+                    self.request_redraw();
                     return;
                 }
                 if let Some(key) = translate_key(&event.logical_key) {
@@ -330,11 +391,24 @@ fn translate_key(key: &WinitKey) -> Option<wat_ui::Key> {
 /// The Android entry point.
 ///
 /// Built only for Android; it hands winit the platform's `AndroidApp` and then
-/// runs the same browser as the desktop, in the mobile chrome layout.
+/// runs the same browser as the desktop, in the mobile chrome layout. The size
+/// in the config is only a starting guess — the real one arrives with the first
+/// resize, and the window is laid out in CSS pixels either way.
+/// The glue calls this by symbol name with the Rust ABI, so it is `no_mangle`
+/// but deliberately not `extern "C"`: `AndroidApp` has no C representation.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn android_main(app: winit::platform::android::activity::AndroidApp) {
+pub fn android_main(app: winit::platform::android::activity::AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
+
+    // Nothing here writes to stdout, and a device has no console anyway, so the
+    // log goes to logcat: `adb logcat -s WAT`.
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("WAT"),
+    );
+    log::info!("What-A-Browser {} starting", env!("CARGO_PKG_VERSION"));
 
     let event_loop = match EventLoop::builder().with_android_app(app).build() {
         Ok(event_loop) => event_loop,

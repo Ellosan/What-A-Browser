@@ -143,9 +143,73 @@ jobs:
             ${{ steps.package.outputs.asset }}.sha256
           if-no-files-found: error
 
+  # The APK is built separately from the desktop matrix: it is one artifact
+  # covering four ABIs, and it needs the Android toolchain rather than a
+  # platform runner.
+  android:
+    name: Android APK
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-release
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install the NDK
+        run: |
+          sdkmanager --install "ndk;27.0.12077973" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build the APK
+        run: ./android/build.sh release
+
+      - name: Name it after the version
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+            version="${version:-dev}"
+            version="${version#v}"
+          fi
+          apk=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          test -n "$apk"
+          # Unsigned: the signing key is not something to keep in a repository.
+          asset="wat-$version-android-unsigned.apk"
+          cp "$apk" "$asset"
+          sha256sum "$asset" > "$asset.sha256"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Check what is in it
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            unzip -l "${{ steps.package.outputs.asset }}" | grep -q "lib/$abi/libwat_shell.so"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.asset }}.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish the release
-    needs: build
+    needs: [build, android]
     runs-on: ubuntu-latest
     # A manual run builds and checks everything but publishes nothing unless a
     # tag was named for it.
@@ -186,7 +250,11 @@ jobs:
 
             The `themes/` directory in each archive holds the Liquid Glass
             presets; point `wat --theme <file.toml>` at one, or at your own.
+
+            **Android**: the `.apk` is unsigned, so `adb install` it or sign it
+            yourself — see `docs/ANDROID.md`. It carries all four ABIs.
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
+            artifacts/*.apk
             artifacts/SHA256SUMS

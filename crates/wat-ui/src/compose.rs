@@ -61,10 +61,27 @@ pub fn render_window_into(
     fonts: &FontStore,
     canvas: &mut Canvas,
 ) {
+    render_window_scaled(chrome, session, fonts, canvas, 1.0);
+}
+
+/// Renders a whole window at a device pixel ratio.
+///
+/// Everything up to here works in CSS pixels — the chrome lays out in them and
+/// so does the page — and the scale is applied to the finished display lists.
+/// A phone at 3× therefore gets the same layout as a desktop at 1×, drawn three
+/// times larger, with the text rasterized at its real size rather than
+/// magnified.
+pub fn render_window_scaled(
+    chrome: &Chrome,
+    session: &Session,
+    fonts: &FontStore,
+    canvas: &mut Canvas,
+    scale: f32,
+) {
     let renderer = Renderer::new(fonts);
-    renderer.render(&window_display_list(chrome, session), canvas);
+    renderer.render(&window_display_list(chrome, session).scaled(scale), canvas);
     // The chrome is drawn in a second pass so its backdrop filters see the page.
-    renderer.render(&chrome.build(fonts, session), canvas);
+    renderer.render(&chrome.build(fonts, session).scaled(scale), canvas);
 }
 
 /// The viewport the page should be laid out for, given the chrome's geometry.

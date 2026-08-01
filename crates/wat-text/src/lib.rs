@@ -206,11 +206,44 @@ impl Default for FontStore {
     }
 }
 
+/// Loads Android's fonts, which `load_system_fonts` does not know about.
+///
+/// fontdb has branches for Windows, macOS, Redox and Linux, and Android matches
+/// none of them — so without this the database is empty on a device and every
+/// glyph falls back to synthetic metrics. The directories are the ones the
+/// platform has used since Android 4, plus the newer partitions that Project
+/// Treble split the system image into.
+#[cfg(target_os = "android")]
+fn load_android_fonts(db: &mut fontdb::Database) {
+    for directory in [
+        "/system/fonts",
+        "/system/font",
+        "/product/fonts",
+        "/vendor/fonts",
+        "/data/fonts",
+    ] {
+        if std::path::Path::new(directory).is_dir() {
+            db.load_fonts_dir(directory);
+        }
+    }
+    // Android's UI font is Roboto; naming it here is what makes `sans-serif`
+    // and `system-ui` resolve to something.
+    db.set_sans_serif_family("Roboto");
+    db.set_serif_family("Noto Serif");
+    db.set_monospace_family("Droid Sans Mono");
+    db.set_cursive_family("Dancing Script");
+    db.set_fantasy_family("Roboto");
+}
+
+#[cfg(not(target_os = "android"))]
+fn load_android_fonts(_db: &mut fontdb::Database) {}
+
 impl FontStore {
     /// Loads the system font set.
     pub fn new() -> Self {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        load_android_fonts(&mut db);
         Self::from_database(db)
     }
 

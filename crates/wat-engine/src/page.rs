@@ -931,12 +931,24 @@ impl Page {
 
     /// Renders the page into a canvas of its own size, for screenshots.
     pub fn render_to_canvas(&self) -> wat_paint::Canvas {
+        self.render_to_canvas_scaled(1.0)
+    }
+
+    /// Renders at a device pixel ratio: the canvas is `scale` times the
+    /// viewport, and the page is drawn that much larger.
+    pub fn render_to_canvas_scaled(&self, scale: f32) -> wat_paint::Canvas {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
         let mut canvas = wat_paint::Canvas::filled(
-            self.viewport.width.max(1.0) as u32,
-            self.viewport.height.max(1.0) as u32,
+            (self.viewport.width * scale).max(1.0) as u32,
+            (self.viewport.height * scale).max(1.0) as u32,
             self.background_color(),
         );
-        wat_paint::Renderer::new(&self.fonts).render(&self.display_list(), &mut canvas);
+        wat_paint::Renderer::new(&self.fonts)
+            .render(&self.display_list().scaled(scale), &mut canvas);
         canvas
     }
 }
