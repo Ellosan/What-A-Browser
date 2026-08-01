@@ -1,0 +1,15 @@
+[package]
+name = "wat-web"
+description = "The seam between the What-A-Browser interface and a web engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wat-css.workspace = true
+wat-layout.workspace = true
+wat-paint.workspace = true
+wat-theme.workspace = true

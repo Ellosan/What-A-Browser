@@ -19,7 +19,17 @@ impl<'a> Renderer<'a> {
 
     /// Replays `list` onto `canvas`.
     pub fn render(&self, list: &DisplayList, canvas: &mut Canvas) {
-        let mut clips: Vec<Clip> = vec![Clip::from_rect(canvas.bounds())];
+        self.render_clipped(list, canvas, &Clip::from_rect(canvas.bounds()));
+    }
+
+    /// Replays `list` onto `canvas`, starting from `clip` instead of the whole
+    /// canvas.
+    ///
+    /// This is what lets a page be painted into part of a window: the engine is
+    /// handed a region and must not draw outside it, because the chrome is
+    /// composited over the top and expects the page's pixels to be underneath.
+    pub fn render_clipped(&self, list: &DisplayList, canvas: &mut Canvas, clip: &Clip) {
+        let mut clips: Vec<Clip> = vec![clip.clone()];
         let mut opacities: Vec<f32> = vec![1.0];
 
         for item in &list.items {

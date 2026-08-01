@@ -2491,6 +2491,7 @@ dependencies = [
  "wat-style",
  "wat-text",
  "wat-theme",
+ "wat-web",
 ]
 
 [[package]]
@@ -2612,6 +2613,16 @@ dependencies = [
  "wat-paint",
  "wat-style",
  "wat-text",
+ "wat-theme",
+]
+
+[[package]]
+name = "wat-web"
+version = "0.1.0"
+dependencies = [
+ "wat-css",
+ "wat-layout",
+ "wat-paint",
  "wat-theme",
 ]
 

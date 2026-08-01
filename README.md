@@ -221,12 +221,14 @@ Being clear about this matters more than the feature list:
 | `wat-net` | URLs, schemes, resource loading, caching |
 | `wat-engine` | The pipeline, tabs, history, internal pages |
 | `wat-theme` | The theme model and the bundled presets |
+| `wat-web` | The seam between the interface and a web engine |
 | `wat-ui` | The adaptive Liquid Glass chrome |
 | `wat-shell` | Window and event loop, desktop and Android entry points, touch |
 | `wat-cli` | The `wat` binary |
+| `wat-servo` | The same interface on Servo's engine (outside the workspace) |
 
 ```sh
-cargo test --workspace   # 830+ tests, no network required
+cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
