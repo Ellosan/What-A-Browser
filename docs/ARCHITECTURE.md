@@ -31,8 +31,9 @@ address  ──►  Resource  ──►  Document  ──►  StyleTree
 3. **Cascade** (`wat-css`, `wat-style`). Author, user and user-agent stylesheets
    are matched against every element. Declarations are sorted by origin,
    importance, inline-ness, specificity and source order, then applied to produce
-   one `ComputedStyle` per node. `font-size` is applied first so `em` lengths
-   resolve correctly.
+   one `ComputedStyle` per node. Custom properties resolve first, because any
+   other declaration may refer to one; `font-size` is applied next so `em`
+   lengths resolve correctly.
 4. **Build boxes** (`wat-layout`). The styled tree becomes a box tree: block
    containers, inline formatting contexts, flex and grid containers, replaced
    elements, list markers, and anonymous boxes where block and inline siblings
@@ -45,6 +46,12 @@ address  ──►  Resource  ──►  Document  ──►  StyleTree
    images and backdrop filters, in CSS paint order.
 7. **Rasterize** (`wat-paint`). The display list is replayed onto a `Canvas`,
    which is either presented in a window or encoded as a PNG.
+
+Scripts run between stages 5 and 6, once the page has a layout for them to
+measure. `wat-script` lends the document to `wat-js` for the duration of each
+run and takes it back, so stages 3 to 5 keep working with a plain `&Document`
+and nothing else in the pipeline knows scripting exists. Anything a script
+changed sends the page back to stage 3.
 
 ## Why the display list exists
 
@@ -65,6 +72,37 @@ things:
 web content: navigate, resize, scroll, hit-test, produce a frame. `Page` is this
 repository's implementation. The shell holds `dyn WebEngine` and reaches past it
 for nothing, so an alternative engine only has to implement the same trait.
+
+## The scripting seam
+
+`wat-js` knows nothing about HTML. Everything a page's code touches is reached
+through one public trait:
+
+```rust
+pub trait HostObject {
+    fn type_name(&self) -> String;
+    fn get(&self, key: &str) -> Option<Value>;
+    fn set(&self, key: &str, value: &Value) -> bool;
+    fn invoke(&self, method: &str, args: &[Value]) -> Result<Value, String>;
+    fn own_keys(&self) -> Vec<String>;
+    fn identity(&self) -> usize;
+}
+```
+
+`wat-script` implements it for nodes, `document`, `window`, `location`,
+`classList`, inline styles and events, and installs them as globals. Nothing
+about the DOM is privileged: an embedder can expose its own objects exactly the
+same way, and the engine is usable on its own.
+
+The document itself is shared by *lending*: `ScriptRuntime` swaps it in for the
+duration of a call and swaps it back out afterwards. That is a few pointer moves
+and it keeps the rest of the pipeline working with a plain `&Document` instead of
+wrapping the whole page in a cell.
+
+Two cycles have to be broken by hand, because reference counting cannot see
+through them: the world holds listeners that hold closures that captured handles
+back to the world, and the global scope holds `document`, which does the same.
+`ScriptRuntime::drop` clears both.
 
 ## The rasterizer
 
@@ -138,9 +176,20 @@ where correct behaviour was traded for a smaller, comprehensible implementation.
 
 ### Scripting
 
-* No JavaScript engine. `<script>` contents are parsed as raw text and never
-  executed. There is no DOM API, no event dispatch beyond hover, and no dynamic
-  layout.
+`docs/JAVASCRIPT.md` covers the engine in full. The gaps that matter to page
+rendering:
+
+* No regular expressions, promises, `async`/`await`, generators, `Symbol`,
+  `Proxy` or `Map`/`Set`; no modules.
+* No networking from scripts — no `fetch`, no `XMLHttpRequest` — so a page that
+  loads its content after rendering stays empty.
+* No `getComputedStyle`, `requestAnimationFrame`, `matchMedia`, storage,
+  cookies, `history`, observers, canvas or workers.
+* Collections come back as arrays rather than live `NodeList`s.
+* Capture-phase listeners are accepted but run in the bubble phase.
+* Timers are queued for the host rather than run on a real clock: the delay
+  orders them, but it is not waited out.
+* Strings are indexed by Unicode scalar value, not UTF-16 code unit.
 
 ### HTML
 
@@ -160,8 +209,16 @@ where correct behaviour was traded for a smaller, comprehensible implementation.
   cascade.
 * `:visited` never matches, and `:has()` and other unmodelled pseudo-classes
   never match rather than matching by accident.
-* `calc()` is parsed and preserved but not evaluated.
-* Custom properties (`--x`) are parsed but not substituted.
+* `calc()`, `min()`, `max()` and `clamp()` are evaluated. An expression that
+  multiplies two lengths, or divides by one, is invalid and drops the
+  declaration. `min()` and `max()` between a percentage and a length keep the
+  limit for layout to apply; `clamp()` needs all three arguments to be the same
+  kind, and an argument that is itself an expression is not supported, because
+  the parser drops the commas that would separate it from the next one.
+* Custom properties are substituted as parsed *values*, not as token streams, so
+  a variable holds a value rather than an arbitrary fragment of a declaration.
+  A variable that refers to itself resolves to nothing after sixteen hops
+  instead of recursing.
 * `ex` and `ch` units are approximated as half the font size instead of being
   read from font metrics.
 * Elliptical border radii collapse to their horizontal component.
@@ -216,3 +273,6 @@ where correct behaviour was traded for a smaller, comprehensible implementation.
   whole suite runs with no network access.
 * The CLI's own tests render `about:` pages to PNGs and decode them again,
   covering the pipeline end to end.
+* **Script tests** assert on the tree a script produced, not on the script
+  running: a test writes markup, runs it, and checks the document — and, at the
+  engine level, that the box tree was rebuilt to match.

@@ -480,11 +480,23 @@ impl Page {
         else {
             return;
         };
-        let mut errors = scripts.run_document_scripts(document);
-        let load = scripts.dispatch_load(document);
-        errors.extend(load.errors);
+        self.script_errors = scripts.run_document_scripts(document);
+        self.apply_script_effects();
 
-        self.script_errors = errors;
+        // The load handlers run against the layout the earlier scripts produced,
+        // not the one the page was parsed with, so measuring in one gives the
+        // real numbers.
+        self.publish_script_state();
+        let Page {
+            scripts: Some(scripts),
+            document,
+            ..
+        } = self
+        else {
+            return;
+        };
+        let load = scripts.dispatch_load(document);
+        self.script_errors.extend(load.errors);
         self.apply_script_effects();
     }
 
@@ -1140,6 +1152,35 @@ mod tests {
         page.run_timers();
         assert_eq!(page.document().text_content(node), "after");
         assert!(!page.has_timers());
+    }
+
+    #[test]
+    fn a_load_handler_measures_the_layout_the_scripts_produced() {
+        let page = page_from(
+            "<div id='host' style='width: 200px'></div>
+             <script>
+               for (let i = 0; i < 4; i++) {
+                 document.getElementById('host').appendChild(document.createElement('p'));
+               }
+               window.addEventListener('load', () => {
+                 const rect = document.getElementById('host').getBoundingClientRect();
+                 document.getElementById('host').setAttribute('data-height', String(rect.height));
+               });
+             </script>",
+        );
+        let host = page.document().query("#host").unwrap();
+        let measured: f32 = page
+            .document()
+            .element(host)
+            .unwrap()
+            .attr("data-height")
+            .expect("the load handler should have measured")
+            .parse()
+            .unwrap();
+        assert!(
+            measured > 0.0,
+            "the four paragraphs added by the script have to be in the height: {measured}"
+        );
     }
 
     #[test]

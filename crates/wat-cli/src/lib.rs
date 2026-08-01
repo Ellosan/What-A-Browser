@@ -521,7 +521,7 @@ pub fn version() -> String {
          engine: {engine} {version}\n\
          renderer: software, signed-distance antialiasing, real backdrop blur\n\
          not based on Chromium, WebKit or Gecko\n\
-         no JavaScript engine\n",
+         JavaScript: WAT JS, written from scratch\n",
         version = wat_engine::VERSION,
         engine = wat_engine::ENGINE_NAME,
     )
@@ -696,7 +696,7 @@ mod tests {
     fn version_text_is_honest() {
         let text = version();
         assert!(text.contains("not based on Chromium"));
-        assert!(text.contains("no JavaScript engine"));
+        assert!(text.contains("WAT JS"));
     }
 
     // The commands below run against `about:` pages, so they need no network.

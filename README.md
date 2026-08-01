@@ -3,8 +3,9 @@
 An open-source web browser for desktop and mobile, built on its own engine.
 
 Not a Chromium wrapper. Not a Firefox fork. The HTML parser, CSS engine, layout
-engine, text stack and rasterizer in this repository are written from scratch in
-Rust, and the interface is themed by a file you can edit.
+engine, text stack, rasterizer and JavaScript engine in this repository are all
+written from scratch in Rust, and the interface is themed by a file you can
+edit.
 
 The default theme is **Liquid Glass**.
 
@@ -114,7 +115,21 @@ Four themes ship with the browser: `liquid-glass`, `liquid-glass-dark`,
 * **CSS** — tokenizer, selector engine (combinators, attribute selectors,
   structural and functional pseudo-classes), specificity and the full cascade
   across user-agent, user and author origins with `!important`, media queries,
-  `@import`, inline styles, presentational attributes, and ~150 properties.
+  `@import`, inline styles, presentational attributes, custom properties with
+  `var()` and fallbacks, `calc()`/`min()`/`max()`/`clamp()`, and ~150
+  properties.
+* **JavaScript** — a lexer, a recursive-descent parser and a tree-walking
+  interpreter: closures, classes with inheritance and `super`, `get`/`set`
+  accessors, `#private` fields, destructuring, template literals, spread,
+  optional chaining, `try`/`catch`/`finally`, and built-ins for `console`,
+  `Math`, `JSON`, `Object`, `Array`, `String`, `Number`, `Date`, the error
+  types and timers.
+* **The DOM** — `document` lookups and creation, `textContent`, `innerHTML`,
+  attributes, `classList`, inline `style` as properties, tree editing,
+  `getBoundingClientRect`, `addEventListener` with bubbling and
+  `preventDefault`, inline `on…` handlers, `window`, `location` and
+  `navigator`. A script that changes the page gets it restyled, laid out and
+  repainted.
 * **Layout** — block and inline formatting contexts with real line breaking,
   margin collapsing, flexbox (grow, shrink, wrap, `justify-content`,
   `align-items`, both directions), a single-axis grid, absolute and fixed
@@ -132,12 +147,44 @@ Four themes ship with the browser: `liquid-glass`, `liquid-glass-dark`,
 * **Browser** — tabs, per-tab history, an omnibox that tells addresses from
   searches, hover and cursor feedback, themed internal pages.
 
+## Scripts run
+
+The JavaScript engine is written from scratch for the same reason as everything
+else here: the whole path from source text to repainted pixel stays readable.
+A page's scripts run after it is parsed, and anything they change is restyled,
+laid out and repainted:
+
+```html
+<button id="add">Add a row</button>
+<ul id="list"></ul>
+<script>
+  document.getElementById('add').addEventListener('click', () => {
+    const item = document.createElement('li');
+    item.textContent = `row ${document.querySelectorAll('li').length + 1}`;
+    item.classList.add('fresh');
+    document.getElementById('list').appendChild(item);
+  });
+</script>
+```
+
+Two limits are enforced on every run, because page scripts share a thread with
+the browser's own interface: a step budget and a maximum call depth. A runaway
+loop stops in well under a second and cannot be caught by the page, so a bad
+script spoils its own page and nothing else.
+
+`docs/JAVASCRIPT.md` covers what the engine supports, what it does not, and how
+to embed it.
+
 ## What is not
 
 Being clear about this matters more than the feature list:
 
-* **There is no JavaScript engine.** Scripts are parsed and ignored. Pages that
-  render entirely from JavaScript will show an empty document.
+* **JavaScript has no regular expressions, promises, `async`/`await`,
+  generators, `Symbol`, `Proxy` or `Map`/`Set`.** There is no `fetch`, no
+  `XMLHttpRequest`, no storage and no `getComputedStyle`, so a page that loads
+  its content over the network after rendering will stay empty. A script that
+  runs too long or recurses too deep is stopped rather than hanging the
+  browser.
 * **Tables** are approximated by treating rows as flex lines rather than running
   the table sizing algorithm.
 * **Floats** are parsed but not laid out around; a floated box behaves as a
@@ -158,8 +205,10 @@ Being clear about this matters more than the feature list:
 | --- | --- |
 | `wat-dom` | Arena-backed DOM, serialization |
 | `wat-html` | HTML tokenizer and tree builder |
-| `wat-css` | CSS tokenizer, values, colours, selectors, media queries, parser |
+| `wat-css` | CSS tokenizer, values, colours, selectors, media queries, `calc()`, parser |
 | `wat-style` | Computed styles, the cascade, the user-agent stylesheet |
+| `wat-js` | The JavaScript engine: lexer, parser, interpreter, built-ins |
+| `wat-script` | DOM bindings and event dispatch, joining the two |
 | `wat-text` | Font discovery, metrics, shaping, glyph rasterization |
 | `wat-layout` | Box tree, block/inline/flex/grid layout, hit testing |
 | `wat-paint` | Display lists and the software rasterizer |
@@ -171,7 +220,7 @@ Being clear about this matters more than the feature list:
 | `wat-cli` | The `wat` binary |
 
 ```sh
-cargo test --workspace   # 550+ tests, no network required
+cargo test --workspace   # 830+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 

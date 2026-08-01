@@ -107,15 +107,18 @@ pub fn version(theme: &ResolvedTheme) -> String {
          </div>\
          <h2>What is implemented here</h2>\
          <div class=\"card\">\
-           <p>HTML tokenizer and tree builder · CSS parser, selector engine and cascade · \
+           <p>HTML tokenizer and tree builder · CSS parser, selector engine and cascade, \
+              with custom properties and <code>calc()</code> · \
               block, inline, flex and grid layout · a software rasterizer with \
               signed-distance antialiasing and real backdrop blur · \
-              font discovery, shaping metrics and glyph rasterization.</p>\
+              font discovery, shaping metrics and glyph rasterization · \
+              a JavaScript engine and DOM bindings, also written from scratch.</p>\
          </div>\
          <h2>What is not</h2>\
          <div class=\"card\">\
-           <p>There is no JavaScript engine, so scripts do not run. \
+           <p>JavaScript has no regular expressions, promises or generators. \
               Floats, tables and grid placement are approximations. \
+              There is no networking from scripts. \
               See <code>docs/ARCHITECTURE.md</code> for the full list.</p>\
          </div>",
         version = VERSION,
@@ -278,7 +281,7 @@ mod tests {
     fn the_version_page_is_honest_about_limits() {
         let html = version(&theme());
         assert_renderable(&html, true);
-        assert!(html.contains("no JavaScript engine"));
+        assert!(html.contains("also written from scratch"));
         assert!(html.contains(VERSION));
     }
 
