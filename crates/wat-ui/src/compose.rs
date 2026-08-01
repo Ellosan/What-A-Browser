@@ -78,10 +78,41 @@ pub fn render_window_scaled(
     canvas: &mut Canvas,
     scale: f32,
 ) {
+    render_window_at(chrome, session, fonts, canvas, scale, Quality::Full);
+}
+
+/// How much of the theme a frame is worth drawing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Quality {
+    /// Everything the theme asks for.
+    Full,
+    /// Without the backdrop filters and shadows, which between them are most of
+    /// what a glass frame costs. For the first frame after launch: the layout is
+    /// identical, so the full frame arriving a moment later sharpens it rather
+    /// than moving anything.
+    Fast,
+}
+
+/// Renders a whole window at a device pixel ratio and a quality.
+pub fn render_window_at(
+    chrome: &Chrome,
+    session: &Session,
+    fonts: &FontStore,
+    canvas: &mut Canvas,
+    scale: f32,
+    quality: Quality,
+) {
     let renderer = Renderer::new(fonts);
-    renderer.render(&window_display_list(chrome, session).scaled(scale), canvas);
+    let finish = |list: DisplayList| match quality {
+        Quality::Full => list,
+        Quality::Fast => list.preview(),
+    };
+    renderer.render(
+        &finish(window_display_list(chrome, session)).scaled(scale),
+        canvas,
+    );
     // The chrome is drawn in a second pass so its backdrop filters see the page.
-    renderer.render(&chrome.build(fonts, session).scaled(scale), canvas);
+    renderer.render(&finish(chrome.build(fonts, session)).scaled(scale), canvas);
 }
 
 /// The viewport the page should be laid out for, given the chrome's geometry.

@@ -324,6 +324,11 @@ impl Clip {
     }
 }
 
+/// Steps in a sampled gradient ramp. 256 is below what an eye can pick out of a
+/// smooth ramp, and makes the index a byte's worth of range.
+const RAMP_STEPS: usize = 256;
+const RAMP_LAST: usize = RAMP_STEPS - 1;
+
 /// A linear gradient in canvas space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearGradient {
@@ -376,6 +381,21 @@ impl LinearGradient {
             1.0 / length_squared
         };
         (self.start, (dx, dy), inverse)
+    }
+
+    /// The colour halfway along the gradient.
+    ///
+    /// What a gradient collapses to when it is being stood in for by a flat
+    /// fill, which is what the first frame after launch does.
+    pub fn midpoint_color(&self) -> Color {
+        self.color_at(0.5)
+    }
+
+    /// The gradient sampled into a ramp, for indexing instead of interpolating.
+    fn ramp(&self) -> Vec<Color> {
+        (0..RAMP_STEPS)
+            .map(|step| self.color_at(step as f32 / RAMP_LAST as f32))
+            .collect()
     }
 
     /// The colour at `t` along the gradient line, clamped to its ends.
@@ -600,7 +620,13 @@ impl Canvas {
     }
 
     /// Writes `color` across one row, skipping the blend when it is opaque.
-    fn fill_row(&mut self, y: u32, x0: u32, x1: u32, color: Color) {
+    ///
+    /// `template` is one row of the span, already filled with the colour, so an
+    /// opaque row is a single copy rather than a loop writing four bytes at a
+    /// time. That matters more than it looks: at a phone's device resolution one
+    /// full-screen fill is two and a half million pixels, and a per-pixel loop
+    /// leaves most of the memory bandwidth unused.
+    fn fill_row(&mut self, y: u32, x0: u32, x1: u32, color: Color, template: &[u8]) {
         if color.a < 255 {
             for x in x0..x1 {
                 self.blend(x, y, color, 1.0);
@@ -608,13 +634,8 @@ impl Canvas {
             return;
         }
         let start = self.index(x0, y);
-        let end = start + (x1 - x0) as usize * 4;
-        for chunk in self.pixels[start..end].chunks_exact_mut(4) {
-            chunk[0] = color.r;
-            chunk[1] = color.g;
-            chunk[2] = color.b;
-            chunk[3] = 255;
-        }
+        let span = (x1 - x0) as usize * 4;
+        self.pixels[start..start + span].copy_from_slice(&template[..span]);
     }
 
     /// Fills a rounded rectangle.
@@ -637,6 +658,21 @@ impl Canvas {
         // a rounded clip.
         let interior = self.solid_interior(&shape, clip);
 
+        // One row of the solid span, built once and copied into every interior
+        // row. The span is the same width on each of them, so this is built here
+        // rather than per row.
+        let template = match interior {
+            Some((ix0, _, ix1, _)) if color.a == 255 && ix1 > ix0 => {
+                let width = (ix1.clamp(x0, x1) - ix0.clamp(x0, x1)) as usize;
+                let mut row = Vec::with_capacity(width * 4);
+                for _ in 0..width {
+                    row.extend_from_slice(&[color.r, color.g, color.b, 255]);
+                }
+                row
+            }
+            _ => Vec::new(),
+        };
+
         for y in y0..y1 {
             let py = y as f32 + 0.5;
             let (solid_start, solid_end) = Self::solid_columns(interior, y, x0, x1);
@@ -649,7 +685,7 @@ impl Canvas {
             };
             general(self, x0, solid_start);
             if solid_end > solid_start {
-                self.fill_row(y, solid_start, solid_end, color);
+                self.fill_row(y, solid_start, solid_end, color, &template);
             }
             general(self, solid_end.max(solid_start), x1);
         }
@@ -669,6 +705,11 @@ impl Canvas {
         // The gradient line is the same for every pixel, so it is resolved once
         // and the projection walked incrementally along the row.
         let (start, axis, inverse) = gradient.line();
+        // Sampled into a ramp rather than evaluated per pixel. Interpolating
+        // between stops means a search plus four rounded lerps every time, and a
+        // gradient large enough for that to matter cannot show the difference
+        // between 256 steps and continuous ones.
+        let ramp = gradient.ramp();
 
         for y in y0..y1 {
             let py = y as f32 + 0.5;
@@ -685,7 +726,8 @@ impl Canvas {
                     continue;
                 }
                 let t = ((px - start.0) * axis.0 + row_term) * inverse;
-                self.blend(x, y, gradient.color_at(t), coverage);
+                let step = (t.clamp(0.0, 1.0) * RAMP_LAST as f32) as usize;
+                self.blend(x, y, ramp[step.min(RAMP_LAST)], coverage);
             }
         }
     }

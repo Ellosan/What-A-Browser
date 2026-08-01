@@ -17,7 +17,8 @@ pub mod icons;
 pub mod omnibox;
 
 pub use compose::{
-    page_viewport, render_window, render_window_into, render_window_scaled, window_display_list,
+    page_viewport, render_window, render_window_at, render_window_into, render_window_scaled,
+    window_display_list, Quality,
 };
 pub use glass::Elevation;
 pub use icons::Icon;

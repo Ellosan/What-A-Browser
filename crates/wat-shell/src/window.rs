@@ -38,6 +38,7 @@ pub fn run_with_event_loop(event_loop: EventLoop<()>, config: ShellConfig) -> Re
         surface: None,
         canvas: Canvas::new(1, 1),
         modifiers: Default::default(),
+        first_frame: true,
     };
     event_loop
         .run_app(&mut app)
@@ -52,6 +53,8 @@ struct App {
     /// Reused between frames so a resize is the only thing that reallocates.
     canvas: Canvas,
     modifiers: wat_ui::Modifiers,
+    /// Cleared once the first frame has gone up, which is drawn cheaply.
+    first_frame: bool,
 }
 
 impl App {
@@ -160,7 +163,20 @@ impl App {
         // nothing is dirty the frame just gets presented again.
         if resized || self.browser.needs_redraw {
             // The canvas is in device pixels; everything above is in CSS pixels.
-            self.browser.render_into_scaled(&mut self.canvas, scale);
+            if self.first_frame {
+                // Launch is the one moment where showing something now beats
+                // showing everything later, so the first frame goes up without
+                // the backdrop filters and shadows — most of what a glass frame
+                // costs — and the real one follows immediately. The layout is
+                // the same either way, so what the user sees is the interface
+                // sharpening, not moving.
+                self.first_frame = false;
+                self.browser
+                    .render_preview_into_scaled(&mut self.canvas, scale);
+                self.request_redraw();
+            } else {
+                self.browser.render_into_scaled(&mut self.canvas, scale);
+            }
         }
 
         let Some(surface) = &mut self.surface else {
