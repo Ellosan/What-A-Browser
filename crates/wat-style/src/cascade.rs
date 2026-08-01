@@ -3,9 +3,9 @@
 use std::rc::Rc;
 
 use crate::apply::apply_declaration;
-use crate::types::{ComputedStyle, Display};
+use crate::types::{ComputedStyle, CustomProperties, Display};
 use wat_css::values::LengthContext;
-use wat_css::{Declaration, MatchContext, MediaContext, Origin, Specificity, Stylesheet};
+use wat_css::{Declaration, MatchContext, MediaContext, Origin, Specificity, Stylesheet, Value};
 use wat_dom::{Document, NodeId};
 
 /// The default stylesheet, applied before user and author rules.
@@ -289,25 +289,58 @@ impl StyleEngine {
 
         let mut style = ComputedStyle::inherit_from(parent_style);
 
+        // Custom properties are resolved first, because every other declaration
+        // may refer to one. They cascade like anything else — the sorted order
+        // means a later declaration of the same name wins — and they inherit, so
+        // this starts from whatever the parent had.
+        let custom_declarations: Vec<&Declaration> = candidates
+            .iter()
+            .map(|candidate| candidate.declaration)
+            .filter(|declaration| declaration.name.starts_with("--"))
+            .collect();
+        if !custom_declarations.is_empty() {
+            let mut properties = (*style.custom_properties).clone();
+            for declaration in custom_declarations {
+                // A custom property may itself use `var()`, resolved against
+                // what is in scope so far.
+                let value = substitute_vars(&declaration.value, &properties);
+                properties.set(declaration.name.clone(), value);
+            }
+            style.custom_properties = Rc::new(properties);
+        }
+
+        // Substituting produces owned values, so they are kept alive here for as
+        // long as the declarations that point at them are in use.
+        let resolved: Vec<Declaration> = candidates
+            .iter()
+            .map(|candidate| candidate.declaration)
+            .filter(|declaration| !declaration.name.starts_with("--"))
+            .map(|declaration| Declaration {
+                name: declaration.name.clone(),
+                value: substitute_vars(&declaration.value, &style.custom_properties),
+                important: declaration.important,
+            })
+            .collect();
+
         // `font-size` must land first: every `em` length depends on it.
         let mut ctx = LengthContext::new(
             parent_style.font_size,
             root_font_size,
             (media.width, media.height),
         );
-        for candidate in candidates
+        for declaration in resolved
             .iter()
-            .filter(|c| matches!(c.declaration.name.as_str(), "font-size" | "font"))
+            .filter(|d| matches!(d.name.as_str(), "font-size" | "font"))
         {
-            apply_declaration(&mut style, parent_style, candidate.declaration, &ctx);
+            apply_declaration(&mut style, parent_style, declaration, &ctx);
         }
 
         ctx.font_size = style.font_size;
-        for candidate in candidates
+        for declaration in resolved
             .iter()
-            .filter(|c| !matches!(c.declaration.name.as_str(), "font-size" | "font"))
+            .filter(|d| !matches!(d.name.as_str(), "font-size" | "font"))
         {
-            apply_declaration(&mut style, parent_style, candidate.declaration, &ctx);
+            apply_declaration(&mut style, parent_style, declaration, &ctx);
         }
 
         // The root element cannot be inline-level, and `display: contents` on it
@@ -320,6 +353,70 @@ impl StyleEngine {
 
         style
     }
+}
+
+/// Replaces every `var(--name, fallback)` with what the name is bound to.
+///
+/// Real CSS substitutes tokens before parsing, which lets a variable hold a
+/// fragment of a declaration. Substituting parsed values instead means a variable
+/// holds a *value*, which covers everything a page does with them in practice
+/// while keeping one parse of each declaration.
+fn substitute_vars(value: &Value, properties: &CustomProperties) -> Value {
+    substitute_with_depth(value, properties, 0)
+}
+
+fn substitute_with_depth(value: &Value, properties: &CustomProperties, depth: usize) -> Value {
+    // A variable that refers to itself would otherwise recurse forever.
+    if depth > 16 {
+        return Value::Keyword(String::new());
+    }
+    match value {
+        Value::Function { name, args } if name == "var" => {
+            let Some(Value::Keyword(variable)) = args.first() else {
+                return Value::Keyword(String::new());
+            };
+            match properties.get(variable) {
+                Some(bound) => substitute_with_depth(bound, properties, depth + 1),
+                // The rest of the arguments are the fallback.
+                None => match args.len() {
+                    0 | 1 => Value::Keyword(String::new()),
+                    2 => substitute_with_depth(&args[1], properties, depth + 1),
+                    _ => Value::List(
+                        args[1..]
+                            .iter()
+                            .map(|arg| substitute_with_depth(arg, properties, depth + 1))
+                            .collect(),
+                    ),
+                },
+            }
+        }
+        Value::Function { name, args } => Value::Function {
+            name: name.clone(),
+            args: substitute_each(args, properties, depth),
+        },
+        // A variable holding a list splices into the list it appears in, so
+        // `--border: 1px solid red; border: var(--border)` works.
+        Value::List(items) => match substitute_each(items, properties, depth).as_slice() {
+            [single] => single.clone(),
+            spliced => Value::List(spliced.to_vec()),
+        },
+        Value::Commas(items) => Value::Commas(substitute_each(items, properties, depth)),
+        other => other.clone(),
+    }
+}
+
+/// Substitutes every item, flattening a list that came from one variable into
+/// the list it was substituted into.
+fn substitute_each(items: &[Value], properties: &CustomProperties, depth: usize) -> Vec<Value> {
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let was_var = matches!(item, Value::Function { name, .. } if name == "var");
+        match substitute_with_depth(item, properties, depth) {
+            Value::List(inner) if was_var => out.extend(inner),
+            resolved => out.push(resolved),
+        }
+    }
+    out
 }
 
 /// Attribute-driven presentation, e.g. `<img width=100>` or `<td align=center>`.
@@ -435,6 +532,197 @@ mod tests {
             style_of(&document, &tree, "body").margin.top,
             crate::types::Margin::Length(LengthPercentage::Px(8.0))
         );
+    }
+
+    #[test]
+    fn a_custom_property_is_substituted() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            ":root { --brand: rgb(1, 2, 3) } p { color: var(--brand) }",
+        );
+        let color = style_of(&document, &tree, "p").color;
+        assert_eq!((color.r, color.g, color.b), (1, 2, 3));
+    }
+
+    #[test]
+    fn custom_properties_inherit() {
+        let (document, tree) = styled(
+            "<div><section><p>x</p></section></div>",
+            "div { --gap: 12px } p { padding-left: var(--gap) }",
+        );
+        assert_eq!(
+            style_of(&document, &tree, "p").padding.left,
+            LengthPercentage::Px(12.0),
+            "a variable declared on an ancestor is in scope"
+        );
+    }
+
+    #[test]
+    fn a_nearer_declaration_shadows_an_inherited_one() {
+        let (document, tree) = styled(
+            "<div><p>x</p></div>",
+            "div { --gap: 4px } p { --gap: 20px; padding-left: var(--gap) }",
+        );
+        assert_eq!(
+            style_of(&document, &tree, "p").padding.left,
+            LengthPercentage::Px(20.0)
+        );
+        // The ancestor keeps its own value.
+        assert_eq!(
+            style_of(&document, &tree, "div")
+                .custom_properties
+                .get("--gap")
+                .cloned(),
+            Some(wat_css::parse_value_str("4px"))
+        );
+    }
+
+    #[test]
+    fn custom_properties_cascade_like_anything_else() {
+        let (document, tree) = styled(
+            "<p class='special'>x</p>",
+            "p { --size: 10px } p.special { --size: 30px } p { width: var(--size) }",
+        );
+        assert_eq!(
+            style_of(&document, &tree, "p").width,
+            Size::Definite(LengthPercentage::Px(30.0)),
+            "the more specific declaration wins"
+        );
+    }
+
+    #[test]
+    fn a_variable_falls_back_when_it_is_not_declared() {
+        let (document, tree) = styled("<p>x</p>", "p { width: var(--missing, 42px) }");
+        assert_eq!(
+            style_of(&document, &tree, "p").width,
+            Size::Definite(LengthPercentage::Px(42.0))
+        );
+    }
+
+    #[test]
+    fn a_variable_with_no_value_and_no_fallback_leaves_the_property_alone() {
+        let (document, tree) = styled("<p>x</p>", "p { width: 7px; height: var(--missing) }");
+        assert_eq!(
+            style_of(&document, &tree, "p").width,
+            Size::Definite(LengthPercentage::Px(7.0)),
+            "the rest of the rule still applies"
+        );
+        assert_eq!(style_of(&document, &tree, "p").height, Size::Auto);
+    }
+
+    #[test]
+    fn a_variable_may_refer_to_another() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            ":root { --base: 8px; --double: var(--base) } p { width: var(--double) }",
+        );
+        assert_eq!(
+            style_of(&document, &tree, "p").width,
+            Size::Definite(LengthPercentage::Px(8.0))
+        );
+    }
+
+    #[test]
+    fn a_self_referential_variable_does_not_hang() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            ":root { --loop: var(--loop) } p { width: var(--loop) }",
+        );
+        assert_eq!(style_of(&document, &tree, "p").width, Size::Auto);
+    }
+
+    #[test]
+    fn a_variable_can_hold_several_values() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            ":root { --edge: 1px solid rgb(9, 9, 9) } p { border-top: var(--edge) }",
+        );
+        let style = style_of(&document, &tree, "p");
+        assert_eq!(style.border_width.top, 1.0);
+        assert_eq!(style.border_color.top, Color::rgb(9, 9, 9));
+    }
+
+    #[test]
+    fn a_variable_works_inside_a_maths_expression() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            ":root { --gutter: 10px } p { width: calc(100px - 2 * var(--gutter)) }",
+        );
+        assert_eq!(
+            style_of(&document, &tree, "p").width,
+            Size::Definite(LengthPercentage::Px(80.0))
+        );
+    }
+
+    #[test]
+    fn calc_resolves_lengths_during_the_cascade() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            "p { width: calc(10px + 5px); padding-left: calc(2em / 2); margin-top: calc(1rem + 4px) }",
+        );
+        let style = style_of(&document, &tree, "p");
+        assert_eq!(style.width, Size::Definite(LengthPercentage::Px(15.0)));
+        assert_eq!(
+            style.padding.left,
+            LengthPercentage::Px(16.0),
+            "2em is 32px"
+        );
+        assert_eq!(
+            style.margin.top,
+            crate::types::Margin::Length(LengthPercentage::Px(20.0))
+        );
+    }
+
+    #[test]
+    fn calc_keeps_a_percentage_for_layout_to_resolve() {
+        let (document, tree) = styled("<p>x</p>", "p { width: calc(100% - 20px) }");
+        let Size::Definite(width) = style_of(&document, &tree, "p").width else {
+            panic!("expected a definite width");
+        };
+        assert_eq!(
+            width,
+            LengthPercentage::Calc {
+                px: -20.0,
+                percent: 100.0
+            }
+        );
+        assert_eq!(width.resolve(200.0), 180.0);
+    }
+
+    #[test]
+    fn min_and_clamp_resolve_too() {
+        let (document, tree) = styled(
+            "<p>x</p>",
+            "p { width: min(50px, 80px); height: clamp(10px, 200px, 100px) }",
+        );
+        let style = style_of(&document, &tree, "p");
+        assert_eq!(style.width, Size::Definite(LengthPercentage::Px(50.0)));
+        assert_eq!(style.height, Size::Definite(LengthPercentage::Px(100.0)));
+    }
+
+    #[test]
+    fn a_min_between_a_percentage_and_a_length_is_bounded_in_layout() {
+        let (document, tree) = styled("<p>x</p>", "p { width: min(100%, 420px) }");
+        let Size::Definite(width) = style_of(&document, &tree, "p").width else {
+            panic!("expected a definite width");
+        };
+        assert_eq!(
+            width,
+            LengthPercentage::Bounded {
+                px: 0.0,
+                percent: 100.0,
+                limit: 420.0,
+                largest: false
+            }
+        );
+        assert_eq!(width.resolve(300.0), 300.0, "under the limit");
+        assert_eq!(width.resolve(900.0), 420.0, "capped at it");
+    }
+
+    #[test]
+    fn an_invalid_maths_expression_leaves_the_property_at_its_initial_value() {
+        let (document, tree) = styled("<p>x</p>", "p { width: calc(10px * 10px) }");
+        assert_eq!(style_of(&document, &tree, "p").width, Size::Auto);
     }
 
     #[test]

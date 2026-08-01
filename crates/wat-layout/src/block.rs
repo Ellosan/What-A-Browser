@@ -192,8 +192,15 @@ pub(crate) fn layout_in_flow_box(
 /// `min-width`/`max-height` and friends also respect `box-sizing`.
 fn adjust_for_box_sizing(size: Size, style: &ComputedStyle, surround: f32) -> Size {
     match (style.box_sizing, size) {
-        (BoxSizing::BorderBox, Size::Definite(wat_style::LengthPercentage::Px(px))) => {
-            Size::Definite(wat_style::LengthPercentage::Px((px - surround).max(0.0)))
+        (BoxSizing::BorderBox, Size::Definite(length)) => {
+            // Only a length that is already in pixels can have the padding and
+            // borders taken off here; a percentage is adjusted once it resolves.
+            match length.resolve_definite() {
+                Some(px) => {
+                    Size::Definite(wat_style::LengthPercentage::Px((px - surround).max(0.0)))
+                }
+                None => size,
+            }
         }
         _ => size,
     }

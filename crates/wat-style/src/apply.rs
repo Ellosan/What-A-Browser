@@ -707,10 +707,7 @@ fn length(value: &Value, ctx: &LengthContext) -> Option<f32> {
 }
 
 fn length_percentage(value: &Value, ctx: &LengthContext) -> Option<LengthPercentage> {
-    match value {
-        Value::Percentage(p) => Some(LengthPercentage::Percent(*p)),
-        other => other.to_px(ctx, None).map(LengthPercentage::Px),
-    }
+    value.to_calc(ctx).map(LengthPercentage::from_calc)
 }
 
 fn parse_size(value: &Value, ctx: &LengthContext) -> Option<Size> {

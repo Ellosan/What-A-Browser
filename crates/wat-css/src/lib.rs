@@ -10,6 +10,7 @@
 //! assert_eq!(rules[0].declarations[0].name, "color");
 //! ```
 
+pub mod calc;
 pub mod color;
 pub mod media;
 pub mod parser;
@@ -17,6 +18,7 @@ pub mod selector;
 pub mod tokenizer;
 pub mod values;
 
+pub use calc::CalcLength;
 pub use color::Color;
 pub use media::{MediaContext, MediaQuery, MediaQueryList, MediaType};
 pub use parser::{

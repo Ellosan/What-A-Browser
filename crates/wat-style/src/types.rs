@@ -3,13 +3,29 @@
 //! Absolute lengths are resolved to CSS pixels during style computation;
 //! percentages stay symbolic because their basis is only known during layout.
 
-use wat_css::Color;
+use std::rc::Rc;
+
+use wat_css::{Color, Value};
 
 /// A value that is either a resolved pixel length or a percentage.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthPercentage {
     Px(f32),
     Percent(f32),
+    /// `calc()` that mixes the two: so many pixels plus so much of the basis.
+    Calc {
+        px: f32,
+        percent: f32,
+    },
+    /// A value the basis decides, with a `min()` or `max()` limit applied after
+    /// it is known — which is what `min(100%, 420px)` means.
+    Bounded {
+        px: f32,
+        percent: f32,
+        limit: f32,
+        /// `max()` rather than `min()`.
+        largest: bool,
+    },
 }
 
 impl LengthPercentage {
@@ -20,6 +36,38 @@ impl LengthPercentage {
         match self {
             LengthPercentage::Px(v) => v,
             LengthPercentage::Percent(p) => basis * p / 100.0,
+            LengthPercentage::Calc { px, percent } => px + basis * percent / 100.0,
+            LengthPercentage::Bounded {
+                px,
+                percent,
+                limit,
+                largest,
+            } => {
+                let value = px + basis * percent / 100.0;
+                if largest {
+                    value.max(limit)
+                } else {
+                    value.min(limit)
+                }
+            }
+        }
+    }
+
+    /// Builds one from an evaluated maths expression, collapsing it to the
+    /// simplest form the value actually needs.
+    pub fn from_calc(calc: wat_css::CalcLength) -> LengthPercentage {
+        if let Some(bound) = calc.bound {
+            return LengthPercentage::Bounded {
+                px: calc.px,
+                percent: calc.percent,
+                limit: bound.px,
+                largest: bound.largest,
+            };
+        }
+        match (calc.px, calc.percent) {
+            (px, 0.0) => LengthPercentage::Px(px),
+            (0.0, percent) => LengthPercentage::Percent(percent),
+            (px, percent) => LengthPercentage::Calc { px, percent },
         }
     }
 
@@ -27,7 +75,9 @@ impl LengthPercentage {
     pub fn resolve_definite(self) -> Option<f32> {
         match self {
             LengthPercentage::Px(v) => Some(v),
-            LengthPercentage::Percent(_) => None,
+            LengthPercentage::Percent(_)
+            | LengthPercentage::Calc { .. }
+            | LengthPercentage::Bounded { .. } => None,
         }
     }
 
@@ -55,8 +105,13 @@ impl Size {
 
     pub fn definite(self, basis: Option<f32>) -> Option<f32> {
         match self {
-            Size::Definite(LengthPercentage::Px(v)) => Some(v),
-            Size::Definite(LengthPercentage::Percent(p)) => basis.map(|b| b * p / 100.0),
+            // A length that needs no basis resolves straight away; everything
+            // else — a percentage, a `calc()` mixing the two, a bounded
+            // `min()` — waits for one.
+            Size::Definite(length) => match length.resolve_definite() {
+                Some(px) => Some(px),
+                None => basis.map(|basis| length.resolve(basis)),
+            },
             _ => None,
         }
     }
@@ -717,6 +772,55 @@ pub struct ComputedStyle {
     // Lists.
     pub list_style_type: ListStyleType,
     pub list_style_position: ListStylePosition,
+
+    /// Custom properties in scope on this element, in the order they were
+    /// declared.
+    ///
+    /// Shared with the parent when the element declares none of its own, which
+    /// is the common case — every element on a page inherits the same handful of
+    /// theme variables and none of them pay for a copy.
+    pub custom_properties: Rc<CustomProperties>,
+}
+
+/// The custom properties (`--name`) in scope on an element.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CustomProperties {
+    entries: Vec<(String, Value)>,
+}
+
+impl CustomProperties {
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.entries
+            .iter()
+            .rev()
+            .find(|(declared, _)| declared == name)
+            .map(|(_, value)| value)
+    }
+
+    /// Declares one, replacing any earlier declaration of the same name.
+    pub fn set(&mut self, name: impl Into<String>, value: Value) {
+        let name = name.into();
+        match self
+            .entries
+            .iter_mut()
+            .find(|(declared, _)| *declared == name)
+        {
+            Some(entry) => entry.1 = value,
+            None => self.entries.push((name, value)),
+        }
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().map(|(name, _)| name.as_str())
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 impl Default for ComputedStyle {
@@ -797,6 +901,7 @@ impl ComputedStyle {
 
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,
+            custom_properties: Rc::new(CustomProperties::default()),
         }
     }
 
@@ -824,6 +929,9 @@ impl ComputedStyle {
             text_decoration: parent.text_decoration,
             text_decoration_color: parent.text_decoration_color,
             text_shadow: parent.text_shadow.clone(),
+            // Custom properties inherit, and sharing the parent's set costs
+            // nothing until the element declares one of its own.
+            custom_properties: parent.custom_properties.clone(),
             ..ComputedStyle::initial()
         }
     }

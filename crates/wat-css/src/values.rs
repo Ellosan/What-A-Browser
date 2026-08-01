@@ -223,7 +223,28 @@ impl Value {
             Value::Dimension(value, unit) if unit.is_length() => Some(ctx.to_px(*value, *unit)),
             Value::Number(value) if *value == 0.0 => Some(0.0),
             Value::Percentage(pct) => basis.map(|b| b * pct / 100.0),
+            // Every length goes through here, so handling maths functions in one
+            // place gives `calc()` to every property at once.
+            Value::Function { .. } if crate::calc::is_math_function(self) => {
+                let length = crate::calc::evaluate(self, ctx)?;
+                match basis {
+                    Some(basis) => Some(length.resolve(basis)),
+                    None => length.resolve_definite(),
+                }
+            }
             _ => None,
+        }
+    }
+
+    /// A length that may still need a percentage basis, which is what
+    /// `calc(100% - 2rem)` is until layout knows the container.
+    pub fn to_calc(&self, ctx: &LengthContext) -> Option<crate::calc::CalcLength> {
+        match self {
+            Value::Percentage(pct) => Some(crate::calc::CalcLength::percent(*pct)),
+            Value::Function { .. } if crate::calc::is_math_function(self) => {
+                crate::calc::evaluate(self, ctx)
+            }
+            other => other.to_px(ctx, None).map(crate::calc::CalcLength::px),
         }
     }
 
@@ -390,6 +411,31 @@ fn parse_space_list(tokens: &[Token], index: &mut usize) -> Option<Value> {
     }
 }
 
+/// Collects the values inside a `(` up to its matching `)`.
+///
+/// Commas are dropped: every consumer either takes the arguments positionally or
+/// re-joins them, and keeping the separators would complicate all of them.
+fn parse_arguments(tokens: &[Token], index: &mut usize) -> Vec<Value> {
+    let mut args = Vec::new();
+    loop {
+        match tokens.get(*index) {
+            None => break,
+            Some(Token::ParenClose) => {
+                *index += 1;
+                break;
+            }
+            Some(Token::Comma) | Some(Token::Whitespace) => {
+                *index += 1;
+            }
+            _ => match parse_single(tokens, index) {
+                Some(arg) => args.push(arg),
+                None => break,
+            },
+        }
+    }
+    args
+}
+
 fn parse_single(tokens: &[Token], index: &mut usize) -> Option<Value> {
     let token = tokens.get(*index)?;
     *index += 1;
@@ -405,23 +451,7 @@ fn parse_single(tokens: &[Token], index: &mut usize) -> Option<Value> {
             None => Value::Keyword(format!("#{hex}")),
         },
         Token::Function(name) => {
-            let mut args = Vec::new();
-            loop {
-                match tokens.get(*index) {
-                    None => break,
-                    Some(Token::ParenClose) => {
-                        *index += 1;
-                        break;
-                    }
-                    Some(Token::Comma) | Some(Token::Whitespace) => {
-                        *index += 1;
-                    }
-                    _ => match parse_single(tokens, index) {
-                        Some(arg) => args.push(arg),
-                        None => break,
-                    },
-                }
-            }
+            let args = parse_arguments(tokens, index);
             let lower = name.to_ascii_lowercase();
             // Colour functions collapse to a concrete colour immediately.
             if matches!(lower.as_str(), "rgb" | "rgba" | "hsl" | "hsla") {
@@ -439,7 +469,13 @@ fn parse_single(tokens: &[Token], index: &mut usize) -> Option<Value> {
         Token::Colon => Value::Keyword(":".into()),
         Token::BracketOpen => Value::Keyword("[".into()),
         Token::BracketClose => Value::Keyword("]".into()),
-        Token::ParenOpen => Value::Keyword("(".into()),
+        // A parenthesised group keeps its contents together, so `calc((a + b) *
+        // c)` groups the way it reads. A bare group only appears inside a maths
+        // expression, where it means the same thing as a nested `calc`.
+        Token::ParenOpen => Value::Function {
+            name: "(".into(),
+            args: parse_arguments(tokens, index),
+        },
         Token::AtKeyword(name) => Value::Keyword(format!("@{name}")),
         Token::Whitespace
         | Token::Comma
