@@ -45,10 +45,17 @@ fn main() {
     println!("      ({} font faces indexed)", fonts.face_count());
     drop(fonts);
 
+    // The theme is an argument because the glass is most of what a frame costs,
+    // and the question of what it costs is worth being able to answer.
+    let theme_name = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "liquid-glass".into());
+    println!("  theme: {theme_name}");
     let (mut browser, browser_ms) = phase("start the browser (theme, home page)", || {
         Browser::new(&ShellConfig {
             offline: true,
             size: logical,
+            theme: theme_name.clone(),
             ..Default::default()
         })
         .expect("the offline browser starts")
