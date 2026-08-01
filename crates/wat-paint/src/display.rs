@@ -232,6 +232,41 @@ impl DisplayList {
         }
     }
 
+    /// The same frame with the expensive effects left out.
+    ///
+    /// For the first frame after launch, where putting something on screen now
+    /// beats putting everything on screen later. Backdrop filters and shadows go
+    /// — between them they are most of what a glass frame costs, and at a phone's
+    /// device resolution that is the difference between a browser that opens and
+    /// one that hesitates. Gradients collapse to their midpoint colour.
+    ///
+    /// The surfaces themselves stay: a glass panel is a filter followed by a
+    /// translucent fill, so without the filter it is still a tinted panel in the
+    /// right place, just not blurred. The layout is identical, which is what
+    /// makes the real frame arriving a moment later a sharpening rather than a
+    /// jump.
+    pub fn preview(&self) -> DisplayList {
+        DisplayList {
+            items: self
+                .items
+                .iter()
+                .filter(|item| {
+                    !matches!(
+                        item,
+                        DisplayItem::BackdropFilter { .. } | DisplayItem::Shadow { .. }
+                    )
+                })
+                .map(|item| match item {
+                    DisplayItem::Gradient { shape, gradient } => DisplayItem::Fill {
+                        shape: *shape,
+                        color: gradient.midpoint_color(),
+                    },
+                    other => other.clone(),
+                })
+                .collect(),
+        }
+    }
+
     /// Number of glass surfaces in the list, which is a useful signal in tests
     /// and in the theme inspector.
     pub fn backdrop_filter_count(&self) -> usize {
@@ -371,6 +406,70 @@ mod tests {
             }
             other => panic!("got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_preview_drops_what_costs_the_most_and_keeps_the_layout() {
+        let mut list = DisplayList::new();
+        list.push(DisplayItem::PushClip(shape()));
+        list.push(DisplayItem::BackdropFilter {
+            shape: shape(),
+            filter: Filter {
+                blur: 20.0,
+                ..Filter::NONE
+            },
+        });
+        list.push(DisplayItem::Shadow {
+            shape: shape(),
+            shadow: ShadowItem {
+                offset: (0.0, 2.0),
+                blur: 8.0,
+                spread: 0.0,
+                color: Color::BLACK,
+                inset: false,
+            },
+        });
+        list.push(DisplayItem::Gradient {
+            shape: shape(),
+            gradient: LinearGradient {
+                start: (0.0, 0.0),
+                end: (0.0, 10.0),
+                stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
+            },
+        });
+        list.push(DisplayItem::Fill {
+            shape: shape(),
+            color: Color::BLACK,
+        });
+        list.push(DisplayItem::PopClip);
+
+        let preview = list.preview();
+        assert_eq!(preview.backdrop_filter_count(), 0, "the glass is dropped");
+        assert!(
+            !preview
+                .items
+                .iter()
+                .any(|item| matches!(item, DisplayItem::Shadow { .. })),
+            "the shadows are dropped"
+        );
+        // The gradient becomes a flat fill rather than disappearing, so the
+        // surface is still drawn and the frame still looks like the frame.
+        assert!(matches!(
+            preview.items[1],
+            DisplayItem::Fill { color, .. } if color != Color::BLACK
+        ));
+        assert!(preview.is_balanced(), "the clip scopes must survive");
+        assert_eq!(preview.len(), 4, "clip, gradient-as-fill, fill, pop");
+    }
+
+    #[test]
+    fn a_preview_of_a_plain_frame_is_the_same_frame() {
+        let mut list = DisplayList::new();
+        list.push(DisplayItem::Fill {
+            shape: shape(),
+            color: Color::BLACK,
+        });
+        assert_eq!(list.preview().len(), list.len());
     }
 
     #[test]

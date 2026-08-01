@@ -383,6 +383,14 @@ impl LinearGradient {
         (self.start, (dx, dy), inverse)
     }
 
+    /// The colour halfway along the gradient.
+    ///
+    /// What a gradient collapses to when it is being stood in for by a flat
+    /// fill, which is what the first frame after launch does.
+    pub fn midpoint_color(&self) -> Color {
+        self.color_at(0.5)
+    }
+
     /// The gradient sampled into a ramp, for indexing instead of interpolating.
     fn ramp(&self) -> Vec<Color> {
         (0..RAMP_STEPS)

@@ -65,17 +65,36 @@ fn main() {
         Canvas::new(physical_width, physical_height)
     });
 
-    let (_, first_frame_ms) = phase("render the first frame", || {
+    let (_, preview_ms) = phase("render the FIRST frame (preview)", || {
+        browser.render_preview_into_scaled(&mut canvas, scale)
+    });
+    let (_, first_frame_ms) = phase("render the full frame after it", || {
         browser.render_into_scaled(&mut canvas, scale)
     });
 
     let (_, present_ms) = phase("copy it out for the window", || canvas.to_argb32());
 
-    let total = font_ms + browser_ms + canvas_ms + first_frame_ms + present_ms;
+    let seen = font_ms + browser_ms + canvas_ms + preview_ms + present_ms;
+    let complete = seen + first_frame_ms + present_ms;
+    println!("\n  {:<38} {seen:>8.1} ms", "TIME TO FIRST PIXELS");
     println!(
-        "\n  {:<38} {total:>8.1} ms",
-        "total before anything is seen"
+        "  {:<38} {complete:>8.1} ms",
+        "time to the full-quality frame"
     );
+
+    // Both frames written out, because the claim that the preview is the same
+    // interface unsharpened is only worth anything if it can be looked at.
+    let _ = std::fs::write("boot-preview.png", {
+        let mut c = Canvas::new(physical_width, physical_height);
+        browser.render_preview_into_scaled(&mut c, scale);
+        c.to_png().expect("the canvas encodes")
+    });
+    let _ = std::fs::write("boot-full.png", {
+        let mut c = Canvas::new(physical_width, physical_height);
+        browser.render_into_scaled(&mut c, scale);
+        c.to_png().expect("the canvas encodes")
+    });
+    println!("  wrote boot-preview.png and boot-full.png");
 
     // Where the frame goes, since it is now the whole boot. Aggregated by kind:
     // the chrome is made of many small pieces and the total per kind is what says

@@ -543,6 +543,22 @@ impl Browser {
         self.needs_redraw = false;
     }
 
+    /// Renders a cheap first frame: no backdrop filters, no shadows.
+    ///
+    /// Deliberately leaves the browser dirty, because this is not the frame the
+    /// user should be left looking at — the shell asks for another straight
+    /// after, and that one is the real thing.
+    pub fn render_preview_into_scaled(&mut self, canvas: &mut Canvas, scale: f32) {
+        wat_ui::render_window_at(
+            &self.chrome,
+            &self.session,
+            &self.fonts,
+            canvas,
+            scale,
+            wat_ui::Quality::Fast,
+        );
+    }
+
     /// Renders the window into a fresh canvas.
     pub fn render(&mut self) -> Canvas {
         let size = self.chrome.size();
