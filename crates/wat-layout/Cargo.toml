@@ -1,0 +1,19 @@
+[package]
+name = "wat-layout"
+description = "Box tree construction and block, inline, flex and grid layout for the WAT web engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wat-css.workspace = true
+wat-dom.workspace = true
+wat-style.workspace = true
+wat-text.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+wat-html.workspace = true

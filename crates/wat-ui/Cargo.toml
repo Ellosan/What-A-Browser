@@ -1,0 +1,22 @@
+[package]
+name = "wat-ui"
+description = "Adaptive Liquid Glass browser chrome for What-A-Browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wat-css.workspace = true
+wat-engine.workspace = true
+wat-layout.workspace = true
+wat-paint.workspace = true
+wat-style.workspace = true
+wat-text.workspace = true
+wat-theme.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+wat-net.workspace = true

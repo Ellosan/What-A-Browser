@@ -1,0 +1,29 @@
+# Liquid Glass, graphite: the same optics with the colour taken out.
+#
+# Shows how far a preset can move by overriding only a handful of fields.
+
+name = "Liquid Glass Graphite"
+appearance = "auto"
+
+[light.palette]
+canvas = "#eceef1"
+accent = "#4a5160"
+accent_soft = "#4a516022"
+text = "#191c22"
+text_muted = "#191c2299"
+
+[light.glass]
+saturation = 1.0
+tint_strength = 0.5
+sheen = 0.26
+
+[dark.palette]
+canvas = "#0d0f12"
+page = "#171a1f"
+accent = "#9aa4b5"
+accent_soft = "#9aa4b52e"
+
+[dark.glass]
+saturation = 1.0
+tint = "#20242b"
+tint_strength = 0.58

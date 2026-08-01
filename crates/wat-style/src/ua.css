@@ -1,0 +1,149 @@
+/* What-A-Browser default (user-agent) stylesheet.
+ *
+ * Deliberately close to the HTML standard's suggested rendering so pages that
+ * ship no CSS of their own still read well. Everything here can be overridden
+ * by author or user styles.
+ */
+
+html, address, blockquote, body, dd, div, dl, dt, fieldset, form,
+frame, frameset, h1, h2, h3, h4, h5, h6, noframes, ol, p, ul, center,
+dir, hr, menu, pre, section, article, aside, header, footer, nav, main,
+figure, figcaption, details, summary, hgroup, legend, output, dialog {
+  display: block;
+}
+
+head, link, meta, style, title, script, noscript, template, base,
+col, colgroup, source, track, param, area, map, datalist, option, optgroup {
+  display: none;
+}
+
+body {
+  margin: 8px;
+  line-height: 1.5;
+}
+
+h1 { font-size: 2em;    font-weight: bold; margin: 0.67em 0 }
+h2 { font-size: 1.5em;  font-weight: bold; margin: 0.83em 0 }
+h3 { font-size: 1.17em; font-weight: bold; margin: 1em 0 }
+h4 { font-size: 1em;    font-weight: bold; margin: 1.33em 0 }
+h5 { font-size: 0.83em; font-weight: bold; margin: 1.67em 0 }
+h6 { font-size: 0.67em; font-weight: bold; margin: 2.33em 0 }
+
+p, blockquote, figure, dl, fieldset, pre, form { margin: 1em 0 }
+blockquote, figure { margin-left: 40px; margin-right: 40px }
+
+ol, ul, menu, dir { margin: 1em 0; padding-left: 40px }
+ol { list-style-type: decimal }
+ul ul, ol ul, ul ol, ol ol { margin-top: 0; margin-bottom: 0 }
+ul ul { list-style-type: circle }
+ul ul ul { list-style-type: square }
+
+li { display: list-item }
+dd { margin-left: 40px }
+dt { font-weight: bold }
+
+hr {
+  margin: 0.5em auto;
+  border-top: 1px solid #c9ccd1;
+  height: 0;
+  overflow: hidden;
+}
+
+pre, code, kbd, samp, tt {
+  font-family: monospace;
+}
+pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+code, kbd, samp {
+  font-size: 0.9375em;
+}
+
+b, strong, th { font-weight: bold }
+i, cite, em, var, address, dfn { font-style: italic }
+u, ins { text-decoration: underline }
+s, strike, del { text-decoration: line-through }
+mark { background-color: #fff2a8; color: #101114 }
+small { font-size: 0.8125em }
+big { font-size: 1.125em }
+sub { vertical-align: sub; font-size: 0.8125em }
+sup { vertical-align: super; font-size: 0.8125em }
+
+a { color: #0a63c9; text-decoration: underline; cursor: pointer }
+a:hover { color: #0850a3 }
+
+img, video, canvas, svg, iframe, embed, object {
+  display: inline-block;
+}
+img { color: #6b7280 }
+
+table {
+  display: table;
+  border-spacing: 0;
+  margin: 0;
+}
+caption { display: table-caption; text-align: center }
+thead, tbody, tfoot { display: table-row-group }
+tr { display: table-row }
+td, th { display: table-cell; padding: 2px; vertical-align: middle }
+th { text-align: center }
+
+form { margin: 0 }
+label { cursor: pointer }
+
+input, textarea, select, button {
+  display: inline-block;
+  font-family: sans-serif;
+  font-size: 0.875em;
+  line-height: 1.4;
+  color: #101114;
+  background-color: #ffffff;
+  border: 1px solid #9aa0a6;
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin: 0;
+}
+button, input[type="submit"], input[type="button"], input[type="reset"] {
+  background-color: #eef0f3;
+  border-color: #b9bec4;
+  text-align: center;
+  cursor: pointer;
+  padding: 4px 10px;
+}
+button:hover, input[type="submit"]:hover { background-color: #e2e5ea }
+input[type="checkbox"], input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+}
+input[type="radio"] { border-radius: 50% }
+input[type="hidden"] { display: none }
+textarea { white-space: pre-wrap; vertical-align: top }
+select { padding-right: 18px }
+:disabled { color: #9aa0a6; cursor: not-allowed }
+
+fieldset {
+  border: 1px solid #c9ccd1;
+  padding: 8px;
+  border-radius: 4px;
+}
+legend { padding: 0 4px }
+
+details { margin: 1em 0 }
+summary { cursor: pointer; font-weight: bold }
+
+abbr[title] { text-decoration: underline }
+q { font-style: italic }
+
+/* Elements that only exist to group content. */
+span, a, em, strong, b, i, u, s, small, big, sub, sup, code, kbd, samp,
+abbr, cite, dfn, q, time, data, var, mark, ruby, bdi, bdo, wbr, br, label,
+picture, slot, output {
+  display: inline;
+}
+
+br { display: inline }
+template { display: none }
+
+[hidden] { display: none }

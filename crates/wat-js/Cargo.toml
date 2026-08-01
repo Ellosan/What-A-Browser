@@ -1,0 +1,12 @@
+[package]
+name = "wat-js"
+description = "A JavaScript engine for What-A-Browser: lexer, parser and interpreter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+log.workspace = true

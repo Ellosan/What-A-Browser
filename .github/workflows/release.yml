@@ -1,0 +1,192 @@
+name: Release
+
+# Tagging `v0.1.0` builds WAT for every supported platform and publishes the
+# archives. The workflow can also be started by hand to check that a build still
+# produces a working binary on every target without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish as, or blank for a dry run"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # A release binary is what people download, so it is worth the extra link time.
+  CARGO_PROFILE_RELEASE_LTO: "true"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+
+jobs:
+  # Nothing is published unless the whole workspace is green, so a bad tag
+  # cannot become a release.
+  check:
+    name: Test and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  build:
+    name: ${{ matrix.name }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # winit needs the X11 and Wayland development headers to build the shell.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin wat
+
+      # A binary that cannot render a page is not worth shipping, and the
+      # renderer is headless, so this runs on every runner including the ones
+      # with no display.
+      - name: Smoke test the binary
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/wat"
+          if [ "${{ runner.os }}" = "Windows" ]; then binary="$binary.exe"; fi
+          "$binary" version
+          "$binary" shot about:home --offline -o smoke.png
+          "$binary" render about:version --offline -o page.png
+          test -s smoke.png
+          test -s page.png
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.tag }}"
+            version="${version:-dev}"
+            version="${version#v}"
+          fi
+          staging="wat-$version-${{ matrix.name }}"
+          mkdir -p "$staging"
+          cp README.md LICENSE "$staging/"
+          cp -r themes "$staging/"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/wat.exe" "$staging/"
+            7z a "$staging.zip" "$staging"
+            echo "asset=$staging.zip" >> "$GITHUB_OUTPUT"
+          else
+            cp "target/${{ matrix.target }}/release/wat" "$staging/"
+            tar czf "$staging.tar.gz" "$staging"
+            echo "asset=$staging.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A checksum next to each archive, so a download can be verified.
+      - name: Checksum
+        shell: bash
+        run: |
+          asset="${{ steps.package.outputs.asset }}"
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.asset }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    # A manual run builds and checks everything but publishes nothing unless a
+    # tag was named for it.
+    if: github.event_name == 'push' || inputs.tag != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect the checksums into one file
+        run: |
+          cd artifacts
+          cat ./*.sha256 > SHA256SUMS
+          rm -f ./*.sha256
+          ls -l
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          name: WAT ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            **What-A-Browser** — an independent browser engine written from
+            scratch in Rust. Not Chromium, not Gecko, not WebKit.
+
+            Download the archive for your platform, unpack it, and run `wat`.
+            Verify a download against `SHA256SUMS` first if you like.
+
+            ```
+            wat                        # open the browser
+            wat about:home             # open a page
+            wat shot https://example.com -o page.png   # render headlessly
+            ```
+
+            The `themes/` directory in each archive holds the Liquid Glass
+            presets; point `wat --theme <file.toml>` at one, or at your own.
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/SHA256SUMS

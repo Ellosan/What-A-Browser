@@ -1,0 +1,58 @@
+# Flat: no translucency, no blur, no sheen.
+#
+# Here so the theme system can be shown not to hard-code the glass look — and
+# because opaque chrome is faster to draw on low-powered devices.
+
+name = "Flat"
+appearance = "auto"
+
+[geometry]
+radius_medium = 8.0
+radius_large = 10.0
+chrome_inset = 0.0
+
+[light.palette]
+canvas = "#f2f3f5"
+surface = "#ffffff"
+surface_raised = "#ffffff"
+border = "#d4d7dd"
+border_strong = "#b0b5be"
+
+[light.glass]
+blur = 0.0
+saturation = 1.0
+brightness = 1.0
+tint = "#ffffff"
+tint_strength = 1.0
+sheen = 0.0
+rim = 0.0
+edge = "#d4d7dd"
+
+[light.glass.shadow]
+offset_y = 1.0
+blur = 2.0
+spread = 0.0
+color = "#0000001f"
+
+[dark.palette]
+canvas = "#101317"
+surface = "#1c2128"
+surface_raised = "#252b33"
+border = "#333a44"
+border_strong = "#4a525e"
+
+[dark.glass]
+blur = 0.0
+saturation = 1.0
+brightness = 1.0
+tint = "#1c2128"
+tint_strength = 1.0
+sheen = 0.0
+rim = 0.0
+edge = "#333a44"
+
+[dark.glass.shadow]
+offset_y = 1.0
+blur = 2.0
+spread = 0.0
+color = "#00000066"

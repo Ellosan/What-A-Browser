@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Liquid Glass demo</title>
+<style>
+  html { background: #0d1b2a; color: #f4f7fb; font-family: system-ui, sans-serif; }
+  body { margin: 0; padding: 40px 32px 80px; }
+  h1 { font-size: 40px; margin: 0 0 8px; letter-spacing: -0.5px }
+  p.lead { color: rgba(244,247,251,0.72); font-size: 17px; margin: 0 0 32px }
+
+  /* Something colourful for the glass to sit on top of. */
+  .bands { position: absolute; top: 0; left: 0; width: 100%; height: 520px; }
+  .band { height: 130px }
+  .b1 { background: linear-gradient(90deg, #ff2d55, #ff9f0a) }
+  .b2 { background: linear-gradient(90deg, #30d158, #0a84ff) }
+  .b3 { background: linear-gradient(90deg, #bf5af2, #64d2ff) }
+  .b4 { background: linear-gradient(90deg, #ffd60a, #ff375f) }
+
+  .stack { position: relative; padding-top: 60px }
+
+  .panel {
+    backdrop-filter: blur(28px) saturate(180%);
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.35);
+    border-radius: 28px;
+    box-shadow: 0 18px 48px -12px rgba(0,0,0,0.55);
+    padding: 28px 32px;
+    margin: 0 0 24px;
+  }
+  .panel h2 { margin: 0 0 8px; font-size: 22px }
+  .panel p { margin: 0; color: rgba(255,255,255,0.86); line-height: 1.6 }
+
+  .row { display: flex; gap: 16px }
+  .chip {
+    flex: 1;
+    backdrop-filter: blur(18px) saturate(160%);
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 18px;
+    padding: 18px;
+    text-align: center;
+  }
+  .chip strong { display: block; font-size: 26px; margin-bottom: 4px }
+  .chip span { color: rgba(255,255,255,0.7); font-size: 13px }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px }
+  .card {
+    backdrop-filter: blur(14px);
+    background: rgba(10,20,35,0.42);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 15px }
+  .card p { margin: 0; font-size: 13px; color: rgba(255,255,255,0.66) }
+  code { background: rgba(255,255,255,0.14); padding: 1px 5px; border-radius: 5px }
+</style>
+</head>
+<body>
+  <div class="bands">
+    <div class="band b1"></div>
+    <div class="band b2"></div>
+    <div class="band b3"></div>
+    <div class="band b4"></div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <h1>Liquid Glass</h1>
+      <p class="lead">Everything below is rendered by this repository's engine —
+        no Chromium, no WebKit, no Gecko.</p>
+      <p>The panels really are translucent: <code>backdrop-filter</code> blurs and
+        saturates the colour bands underneath before the tint goes on top.</p>
+    </div>
+
+    <div class="row">
+      <div class="chip"><strong>28px</strong><span>blur radius</span></div>
+      <div class="chip"><strong>180%</strong><span>saturation</span></div>
+      <div class="chip"><strong>0</strong><span>GPU drivers needed</span></div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <h3>Signed distance fields</h3>
+        <p>Rounded rectangles, per-side borders and glass edges are all one antialiased primitive.</p>
+      </div>
+      <div class="card">
+        <h3>Separable blur</h3>
+        <p>Three box passes approximate a Gaussian over premultiplied pixels.</p>
+      </div>
+      <div class="card">
+        <h3>Themes are data</h3>
+        <p>Blur, tint, sheen and rim all come from a TOML file you can edit.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

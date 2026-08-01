@@ -1,0 +1,16 @@
+[package]
+name = "wat-style"
+description = "Cascade and computed style model for the WAT web engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+wat-css.workspace = true
+wat-dom.workspace = true
+
+[dev-dependencies]
+wat-html.workspace = true

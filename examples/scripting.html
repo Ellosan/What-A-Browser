@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scripting in WAT</title>
+<style>
+  :root {
+    --brand: #ff7a1a;
+    --ink: #e8eef5;
+    --muted: #9aa7b4;
+    --pad: 20px;
+    --radius: calc(var(--pad) - 4px);
+    --card: rgba(255, 255, 255, 0.07);
+    --edge: 1px solid rgba(255, 255, 255, 0.16);
+  }
+  body {
+    margin: 0;
+    padding: calc(var(--pad) * 1.5);
+    background: #0d1116;
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  h1 { margin: 0 0 4px; font-size: calc(1rem + 14px); color: var(--brand); }
+  .lede { margin: 0 0 var(--pad); color: var(--muted); }
+  .row { display: flex; gap: var(--pad); align-items: flex-start; }
+  .card {
+    background: var(--card);
+    border: var(--edge);
+    border-radius: var(--radius);
+    padding: var(--pad);
+    backdrop-filter: blur(20px) saturate(1.6);
+    width: calc(50% - var(--pad) / 2);
+  }
+  .card h2 { margin: 0 0 10px; font-size: 15px; letter-spacing: 0.04em;
+             text-transform: uppercase; color: var(--muted); }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  li.odd { color: var(--brand); }
+  code { background: rgba(255, 255, 255, 0.1); padding: 1px 6px;
+         border-radius: 5px; font-size: 13px; }
+  .total { font-size: 26px; font-weight: 700; }
+  .note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+  .wide { width: min(100%, 640px); margin-top: var(--pad); }
+</style>
+</head>
+<body>
+
+<h1 id="title">placeholder</h1>
+<p class="lede" id="lede">placeholder</p>
+
+<div class="row">
+  <section class="card">
+    <h2>Built by a script</h2>
+    <ul id="list"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Measured by a script</h2>
+    <p class="total" id="total">–</p>
+    <p class="note" id="measured">–</p>
+  </section>
+</div>
+
+<section class="card wide">
+  <h2>Handled by a script</h2>
+  <p id="clicks">Nothing has been clicked yet.</p>
+  <p class="note">
+    Click anywhere and a <code>click</code> listener on <code>document</code>
+    will see it bubble up and rewrite this line.
+  </p>
+</section>
+
+<script>
+  // Everything below runs in WAT's own JavaScript engine.
+  class Row {
+    #index;
+
+    constructor(index) {
+      this.#index = index;
+    }
+
+    get label() {
+      return `row ${this.#index}`;
+    }
+
+    get odd() {
+      return this.#index % 2 === 1;
+    }
+  }
+
+  const rows = Array.from({ length: 7 }, (_, i) => new Row(i + 1));
+
+  const list = document.getElementById('list');
+  for (const row of rows) {
+    const item = document.createElement('li');
+    item.innerHTML = `<code>${row.label}</code> — ${row.odd ? 'odd' : 'even'}`;
+    if (row.odd) item.classList.add('odd');
+    list.appendChild(item);
+  }
+
+  document.getElementById('title').textContent = 'Scripting in WAT';
+  document.getElementById('lede').textContent =
+    'A from-scratch JavaScript engine, driving a from-scratch layout engine.';
+
+  const { length: total } = document.querySelectorAll('#list li');
+  const odds = document.querySelectorAll('.odd').length;
+  document.getElementById('total').textContent = `${total} rows, ${odds} odd`;
+
+  // Measuring waits for `load`: rectangles are a snapshot taken before the
+  // script ran, and by then this one has changed the page.
+  window.addEventListener('load', () => {
+    const box = document.querySelector('.card').getBoundingClientRect();
+    document.getElementById('measured').textContent =
+      `The first card is ${Math.round(box.width)}×${Math.round(box.height)} ` +
+      `in a ${window.innerWidth}px viewport.`;
+  });
+
+  let clicks = 0;
+  document.addEventListener('click', (event) => {
+    clicks += 1;
+    document.getElementById('clicks').textContent =
+      `${clicks} click${clicks === 1 ? '' : 's'}, most recently on <${event.target.tagName.toLowerCase()}>.`;
+  });
+
+  document.title = `Scripting in WAT — ${total} rows`;
+</script>
+
+</body>
+</html>

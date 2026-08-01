@@ -1,0 +1,109 @@
+# Liquid Glass — What-A-Browser's default theme.
+#
+# Every value below is also the built-in default, so this file doubles as
+# documentation of the whole theme surface. Copy it, change what you like, and
+# point the browser at it with `--theme path/to/your-theme.toml`.
+
+name = "Liquid Glass"
+# "auto" follows the platform preference; "light" or "dark" pin it.
+appearance = "auto"
+
+[geometry]
+radius_small = 8.0
+radius_medium = 14.0
+radius_large = 22.0
+radius_pill = 999.0
+spacing = 8.0
+border_width = 1.0
+toolbar_height = 52.0
+tab_strip_height = 40.0
+mobile_top_height = 56.0
+mobile_bottom_height = 64.0
+control_size = 34.0
+progress_height = 3.0
+chrome_inset = 10.0
+
+[typography]
+ui_family = ["Inter", "SF Pro Text", "Segoe UI", "system-ui", "sans-serif"]
+mono_family = ["SF Mono", "JetBrains Mono", "Consolas", "monospace"]
+size_small = 12.0
+size_base = 14.0
+size_large = 17.0
+weight_normal = 400
+weight_medium = 550
+weight_bold = 680
+
+[motion]
+enabled = true
+duration_fast = 0.12
+duration_base = 0.24
+
+[light.palette]
+canvas = "#e8edf5"
+page = "#ffffff"
+surface = "#ffffffd9"
+surface_raised = "#fffffff2"
+text = "#10141c"
+text_muted = "#10141c99"
+text_on_accent = "#ffffff"
+accent = "#0a84ff"
+accent_soft = "#0a84ff24"
+border = "#10141c1f"
+border_strong = "#10141c38"
+danger = "#ff3b30"
+success = "#30b05c"
+warning = "#ff9f0a"
+
+[light.glass]
+# The backdrop is blurred and saturated before anything is drawn on top.
+blur = 24.0
+saturation = 1.8
+brightness = 1.04
+# Then washed with this tint at this strength.
+tint = "#ffffff"
+tint_strength = 0.42
+# Then a top-down specular highlight, and an inner rim light that reads as
+# the thickness of the glass.
+sheen = 0.34
+rim = 0.55
+rim_color = "#ffffff"
+edge = "#ffffff59"
+
+[light.glass.shadow]
+offset_y = 10.0
+blur = 28.0
+spread = -6.0
+color = "#080c1838"
+
+[dark.palette]
+canvas = "#0b0e14"
+page = "#141820"
+surface = "#2a303dcc"
+surface_raised = "#353c4be6"
+text = "#f2f5fa"
+text_muted = "#f2f5fa8c"
+text_on_accent = "#ffffff"
+accent = "#4ca6ff"
+accent_soft = "#4ca6ff33"
+border = "#ffffff1a"
+border_strong = "#ffffff33"
+danger = "#ff6b60"
+success = "#4cd07d"
+warning = "#ffb83d"
+
+[dark.glass]
+blur = 28.0
+saturation = 1.6
+brightness = 0.92
+tint = "#1c222e"
+tint_strength = 0.5
+sheen = 0.14
+rim = 0.3
+rim_color = "#ffffff"
+edge = "#ffffff2e"
+
+[dark.glass.shadow]
+offset_y = 12.0
+blur = 34.0
+spread = -8.0
+color = "#0000008c"

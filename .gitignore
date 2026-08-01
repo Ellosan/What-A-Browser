@@ -1,0 +1,7 @@
+/target/
+**/*.rs.bk
+*.pdb
+
+# Images produced by `wat render` and `wat shot`
+/*.png
+!docs/images/*.png
