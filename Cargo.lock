@@ -623,6 +623,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
 dependencies = [
  "log",
+ "memmap2",
  "slotmap",
  "tinyvec",
  "ttf-parser",
