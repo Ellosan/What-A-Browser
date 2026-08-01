@@ -60,6 +60,9 @@ dirs = "5"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+# Nothing reads a backtrace out of a shipped binary, and the symbols are most of
+# its size — the Android library goes from hundreds of megabytes to tens.
+strip = "symbols"
 
 [profile.dev]
 opt-level = 1

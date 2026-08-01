@@ -13,7 +13,7 @@ use wat_paint::Canvas;
 use wat_style::Cursor;
 use wat_text::FontStore;
 use wat_theme::{Appearance, Theme};
-use wat_ui::{page_viewport, render_window_into, Chrome, Key, Modifiers, UiAction};
+use wat_ui::{page_viewport, render_window_scaled, Chrome, Key, Modifiers, UiAction};
 
 /// How to start the browser.
 #[derive(Clone, Debug)]
@@ -68,8 +68,27 @@ pub struct Browser {
     dark: bool,
     /// Where the pointer is, in window coordinates.
     pointer: Option<Point>,
+    /// The finger currently on the screen, if any.
+    touch: Option<Touch>,
     pub needs_redraw: bool,
     pub should_quit: bool,
+}
+
+/// How far a finger may travel before it is a scroll rather than a tap.
+///
+/// Fingers are imprecise: a tap that moves a few pixels is still a tap, and a
+/// scroll that starts on a link must not follow it.
+pub const TAP_SLOP: f32 = 12.0;
+
+/// A finger on the screen.
+#[derive(Clone, Copy, Debug)]
+struct Touch {
+    /// Where it went down, which is where a tap is delivered.
+    origin: Point,
+    /// Where it was last seen.
+    last: Point,
+    /// Set once it has travelled further than [`TAP_SLOP`].
+    scrolling: bool,
 }
 
 impl Browser {
@@ -112,6 +131,7 @@ impl Browser {
             theme,
             dark,
             pointer: None,
+            touch: None,
             needs_redraw: true,
             should_quit: false,
         };
@@ -167,6 +187,16 @@ impl Browser {
             self.chrome.layout().is_mobile(),
         );
         self.needs_redraw = true;
+    }
+
+    /// Whether there is anywhere to go back to.
+    ///
+    /// Android's back gesture only leaves the app once this is false, which is
+    /// what every browser on the platform does.
+    pub fn can_go_back(&self) -> bool {
+        self.session
+            .active()
+            .is_some_and(|tab| tab.history.can_go_back())
     }
 
     /// The last known pointer position, in window coordinates.
@@ -286,6 +316,87 @@ impl Browser {
         self.session
             .active()
             .is_some_and(|tab| tab.page.has_timers())
+    }
+
+    // ---- touch ------------------------------------------------------------
+    //
+    // A finger is not a mouse. It has no hover, it cannot be pressed without
+    // also being a potential scroll, and the difference between a tap and a
+    // scroll is only known once it lifts. So a touch is buffered here: pressing
+    // is deferred until the finger has stayed put, and dragging scrolls the page
+    // rather than moving a cursor around it.
+
+    pub fn touch_started(&mut self, point: Point) {
+        self.touch = Some(Touch {
+            origin: point,
+            last: point,
+            scrolling: false,
+        });
+        self.pointer = Some(point);
+        // The press is shown straight away so a button lights up under the
+        // finger; a drag cancels it below.
+        self.needs_redraw |= self.chrome.pointer_down(point);
+    }
+
+    pub fn touch_moved(&mut self, point: Point) {
+        let Some(mut touch) = self.touch else { return };
+        let travelled = (point.x - touch.origin.x).hypot(point.y - touch.origin.y);
+
+        if !touch.scrolling && travelled > TAP_SLOP {
+            touch.scrolling = true;
+            // What looked like a press is a scroll, so nothing stays lit.
+            self.chrome.cancel_press();
+            self.needs_redraw = true;
+        }
+
+        if touch.scrolling {
+            // Content follows the finger: dragging up scrolls down.
+            let delta = touch.last.y - point.y;
+            if delta != 0.0 {
+                self.scroll(touch.origin, delta);
+            }
+        }
+
+        touch.last = point;
+        self.touch = Some(touch);
+        self.pointer = Some(point);
+    }
+
+    pub fn touch_ended(&mut self, point: Point) {
+        let Some(touch) = self.touch.take() else {
+            return;
+        };
+        self.pointer = Some(point);
+        if touch.scrolling {
+            // A scroll is not a click, so nothing is activated when it lifts.
+            self.chrome.cancel_press();
+            self.needs_redraw = true;
+            return;
+        }
+        // A tap acts where the finger went down, not where it drifted to.
+        self.pointer = Some(touch.origin);
+        self.pointer_up(touch.origin);
+        // A finger leaves no cursor behind, so nothing stays hovered.
+        self.clear_hover();
+    }
+
+    pub fn touch_cancelled(&mut self) {
+        self.touch = None;
+        self.chrome.cancel_press();
+        self.clear_hover();
+        self.needs_redraw = true;
+    }
+
+    /// Drops hover state without forgetting where the last touch was.
+    fn clear_hover(&mut self) {
+        let mut redraw = self.chrome.pointer_moved(None);
+        if let Some(tab) = self.session.active_mut() {
+            redraw |= tab.page.set_hover(None);
+        }
+        if self.chrome.status.take().is_some() {
+            redraw = true;
+        }
+        self.needs_redraw |= redraw;
     }
 
     pub fn middle_click(&mut self, point: Point) {
@@ -422,7 +533,13 @@ impl Browser {
 
     /// Renders the window into `canvas`, which must be the window's size.
     pub fn render_into(&mut self, canvas: &mut Canvas) {
-        render_window_into(&self.chrome, &self.session, &self.fonts, canvas);
+        self.render_into_scaled(canvas, 1.0);
+    }
+
+    /// Renders at a device pixel ratio: the canvas is `scale` times the size
+    /// the chrome laid out for.
+    pub fn render_into_scaled(&mut self, canvas: &mut Canvas, scale: f32) {
+        render_window_scaled(&self.chrome, &self.session, &self.fonts, canvas, scale);
         self.needs_redraw = false;
     }
 
@@ -648,6 +765,165 @@ mod tests {
         browser.pointer_down(point);
         browser.pointer_up(point);
         assert_eq!(browser.session.active().unwrap().url(), "about:settings");
+    }
+
+    /// A phone-sized browser, short enough that its page overflows.
+    fn phone() -> Browser {
+        Browser::new(&ShellConfig {
+            offline: true,
+            url: Some("about:version".into()),
+            size: Size2D::new(390.0, 420.0),
+            ..ShellConfig::mobile()
+        })
+        .expect("the offline browser starts")
+    }
+
+    /// Where the settings link on the home page is, in window coordinates.
+    fn link_point(browser: &Browser, href: &str) -> Point {
+        let content = browser.chrome.content_rect();
+        let tab = browser.session.active().unwrap();
+        let node = tab
+            .page
+            .document()
+            .query_all("a")
+            .into_iter()
+            .find(|node| {
+                tab.page
+                    .document()
+                    .element(*node)
+                    .and_then(|el| el.attr("href"))
+                    == Some(href)
+            })
+            .expect("the page has that link");
+        let index = tab
+            .page
+            .layout_tree()
+            .box_for_node(node)
+            .expect("the link has a box");
+        let rect = tab.page.layout_tree().get(index).rect;
+        Point::new(content.x + rect.center().x, content.y + rect.center().y)
+    }
+
+    #[test]
+    fn a_tap_follows_a_link() {
+        let mut browser = browser();
+        let point = link_point(&browser, "about:settings");
+        browser.touch_started(point);
+        browser.touch_ended(point);
+        assert_eq!(browser.session.active().unwrap().url(), "about:settings");
+    }
+
+    #[test]
+    fn a_tap_that_wobbles_a_little_is_still_a_tap() {
+        let mut browser = browser();
+        let point = link_point(&browser, "about:settings");
+        browser.touch_started(point);
+        // Inside the slop, so still a tap.
+        let wobble = Point::new(point.x + 3.0, point.y - 4.0);
+        browser.touch_moved(wobble);
+        browser.touch_ended(wobble);
+        assert_eq!(browser.session.active().unwrap().url(), "about:settings");
+    }
+
+    #[test]
+    fn dragging_scrolls_instead_of_following_the_link() {
+        let mut browser = browser();
+        let point = link_point(&browser, "about:settings");
+        browser.touch_started(point);
+        // Well past the slop: this is a scroll.
+        for step in 1..=4 {
+            browser.touch_moved(Point::new(point.x, point.y - 20.0 * step as f32));
+        }
+        browser.touch_ended(Point::new(point.x, point.y - 80.0));
+        assert_eq!(
+            browser.session.active().unwrap().url(),
+            "about:home",
+            "a scroll that starts on a link must not follow it"
+        );
+    }
+
+    #[test]
+    fn dragging_up_scrolls_the_page_down() {
+        let mut browser = phone();
+        let start = browser.chrome.content_rect().center();
+        let before = browser.session.active().unwrap().page.scroll_offset().y;
+
+        browser.touch_started(start);
+        for step in 1..=5 {
+            browser.touch_moved(Point::new(start.x, start.y - 30.0 * step as f32));
+        }
+        let after = browser.session.active().unwrap().page.scroll_offset().y;
+        assert!(
+            after > before,
+            "content follows the finger: {before} -> {after}"
+        );
+
+        // And back the other way.
+        for step in (0..=5).rev() {
+            browser.touch_moved(Point::new(start.x, start.y - 30.0 * step as f32));
+        }
+        browser.touch_ended(start);
+        let back = browser.session.active().unwrap().page.scroll_offset().y;
+        assert!(back < after, "dragging down scrolls up: {after} -> {back}");
+    }
+
+    #[test]
+    fn a_cancelled_touch_does_nothing() {
+        let mut browser = browser();
+        let point = link_point(&browser, "about:settings");
+        browser.touch_started(point);
+        browser.touch_cancelled();
+        browser.touch_ended(point);
+        assert_eq!(browser.session.active().unwrap().url(), "about:home");
+    }
+
+    #[test]
+    fn a_touch_leaves_nothing_hovered() {
+        let mut browser = browser();
+        let point = link_point(&browser, "about:settings");
+        browser.touch_started(point);
+        browser.touch_ended(point);
+        assert!(
+            browser.chrome.status.is_none(),
+            "a finger leaves no cursor, so no link should look hovered"
+        );
+    }
+
+    #[test]
+    fn tapping_a_toolbar_button_works() {
+        let mut browser = browser();
+        let home = browser
+            .chrome
+            .geometry()
+            .rect_of(WidgetId::Home)
+            .unwrap()
+            .center();
+        let _ = browser.session.navigate("about:version", &OfflineLoader);
+        browser.touch_started(home);
+        browser.touch_ended(home);
+        assert_eq!(browser.session.active().unwrap().url(), "about:home");
+    }
+
+    #[test]
+    fn rendering_at_a_device_pixel_ratio_fills_the_bigger_canvas() {
+        let mut browser = phone();
+        let size = browser.chrome.size();
+        let scale = 3.0;
+        let mut canvas =
+            wat_paint::Canvas::new((size.width * scale) as u32, (size.height * scale) as u32);
+        browser.render_into_scaled(&mut canvas, scale);
+
+        // The chrome reaches the bottom of the window at any scale, so the last
+        // row must have been drawn on.
+        let bottom = canvas.height() - 1;
+        let painted = (0..canvas.width())
+            .filter(|x| canvas.pixel(*x, bottom).a > 0)
+            .count();
+        assert!(
+            painted > canvas.width() as usize / 2,
+            "only {painted} of {} pixels on the bottom row were painted",
+            canvas.width()
+        );
     }
 
     #[test]

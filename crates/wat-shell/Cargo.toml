@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+# An Android app loads the browser as a shared library, so the crate has to be
+# built as one; `lib` stays for the desktop binary and the tests.
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [features]
 default = ["window"]
 # Windowing can be switched off for headless builds; the CLI still works.
@@ -29,3 +34,5 @@ softbuffer = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { workspace = true, optional = true, features = ["android-native-activity"] }
+# Without this, `log` output goes nowhere on a device.
+android_logger = "0.14"

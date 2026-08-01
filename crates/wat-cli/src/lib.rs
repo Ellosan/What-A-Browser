@@ -13,7 +13,7 @@ use wat_layout::geom::{Point, Size2D};
 use wat_net::{normalize_input, Address, HttpLoader, Loader, OfflineLoader};
 use wat_text::FontStore;
 use wat_theme::{preset_names, Theme};
-use wat_ui::{page_viewport, render_window, Chrome};
+use wat_ui::{page_viewport, render_window_scaled, Chrome};
 
 /// Options shared by every command.
 #[derive(Clone, Debug)]
@@ -28,6 +28,8 @@ pub struct CommonOptions {
     pub offline: bool,
     /// Treat the viewport as a touch screen.
     pub mobile: bool,
+    /// Device pixel ratio: the output is this many pixels per CSS pixel.
+    pub scale: f32,
     pub search: String,
 }
 
@@ -40,6 +42,7 @@ impl Default for CommonOptions {
             appearance: None,
             offline: false,
             mobile: false,
+            scale: 1.0,
             search: "https://duckduckgo.com/?q={}".to_string(),
         }
     }
@@ -48,6 +51,25 @@ impl Default for CommonOptions {
 impl CommonOptions {
     pub fn size(&self) -> Size2D {
         Size2D::new(self.width.max(64.0), self.height.max(64.0))
+    }
+
+    /// The device pixel ratio, clamped to something renderable.
+    pub fn scale(&self) -> f32 {
+        if self.scale.is_finite() && self.scale > 0.0 {
+            self.scale.clamp(0.25, 8.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// The canvas size in device pixels.
+    pub fn pixel_size(&self) -> (u32, u32) {
+        let size = self.size();
+        let scale = self.scale();
+        (
+            (size.width * scale).round().max(1.0) as u32,
+            (size.height * scale).round().max(1.0) as u32,
+        )
     }
 
     /// Loads and resolves the theme.
@@ -191,6 +213,11 @@ pub fn parse_args(args: &[String]) -> Result<Invocation, String> {
             "--light" => options.appearance = Some(false),
             "--offline" => options.offline = true,
             "--mobile" => options.mobile = true,
+            "--scale" => {
+                options.scale = value("--scale")?
+                    .parse()
+                    .map_err(|_| "--scale needs a number".to_string())?
+            }
             "-h" | "--help" => {
                 return Ok(Invocation {
                     command: Command::Help,
@@ -297,7 +324,9 @@ fn load_page(url: &str, options: &CommonOptions, viewport: Size2D) -> Result<Pag
 /// `wat render`
 pub fn render(url: &str, out: &std::path::Path, options: &CommonOptions) -> Result<String, String> {
     let page = load_page(url, options, options.size())?;
-    let canvas = page.render_to_canvas();
+    // The page is laid out in CSS pixels and drawn at the device pixel ratio,
+    // exactly as the window does it.
+    let canvas = page.render_to_canvas_scaled(options.scale());
     let png = canvas.to_png()?;
     std::fs::write(out, png).map_err(|error| format!("{}: {error}", out.display()))?;
     Ok(format!(
@@ -331,7 +360,9 @@ pub fn shot(url: &str, out: &std::path::Path, options: &CommonOptions) -> Result
         chrome.omnibox.set_url(tab.url());
     }
 
-    let canvas = render_window(&chrome, &session, &fonts);
+    let (width, height) = options.pixel_size();
+    let mut canvas = wat_paint::Canvas::new(width, height);
+    render_window_scaled(&chrome, &session, &fonts, &mut canvas, options.scale());
     let png = canvas.to_png()?;
     std::fs::write(out, png).map_err(|error| format!("{}: {error}", out.display()))?;
     Ok(format!(

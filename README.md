@@ -222,7 +222,7 @@ Being clear about this matters more than the feature list:
 | `wat-engine` | The pipeline, tabs, history, internal pages |
 | `wat-theme` | The theme model and the bundled presets |
 | `wat-ui` | The adaptive Liquid Glass chrome |
-| `wat-shell` | Window and event loop, desktop and Android entry points |
+| `wat-shell` | Window and event loop, desktop and Android entry points, touch |
 | `wat-cli` | The `wat` binary |
 
 ```sh
@@ -230,19 +230,37 @@ cargo test --workspace   # 830+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
-## Mobile builds
+## Android
 
-The chrome, engine and rasterizer are platform-independent; only `wat-shell`
-touches the window system.
+There is a real Android app in `android/`, and it is the same browser: no Java
+beyond a manifest, no WebView. `NativeActivity` loads `libwat_shell.so` and
+everything from the HTML parser to the rasterizer is the Rust in `crates/`.
 
-* **Android** — `wat-shell` exports `android_main` when built for an Android
-  target, using winit's native-activity backend. Build the shared library with
-  `cargo-ndk` and package it with an ordinary activity.
-* **iOS** — winit drives UIKit, so `wat_shell::run` works from an Xcode project's
-  `main`.
+```sh
+cargo install cargo-ndk
+rustup target add aarch64-linux-android armv7-linux-androideabi \
+    i686-linux-android x86_64-linux-android
+export ANDROID_HOME=$HOME/Android/Sdk
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 
-Both entry points are wired up and compile, but have not been exercised on a
-device; treat them as a starting point rather than a shipping app.
+./android/build.sh                 # debug APK, all four ABIs
+./android/build.sh release         # 4.6 MB, unsigned
+```
+
+A whole browser engine in a 4.6 MB APK, because there is no engine to bundle —
+it is the app.
+
+Making the desktop shell work on a phone took four things, not a port: laying
+out in CSS pixels and rasterizing at the device pixel ratio, a touch model where
+a drag scrolls and only a finger that stayed put taps, the back gesture going
+back in history, and loading `/system/fonts`, which `fontdb` does not do.
+`docs/ANDROID.md` covers all of it.
+
+**It has not been run on a device.** It compiles for every ABI, exports the
+right symbols and assembles into an installable APK — but nobody has held it.
+
+**iOS** — winit drives UIKit, so `wat_shell::run` works from an Xcode project's
+`main`. That one really is just a starting point.
 
 ## Contributing
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Liquid Glass page colour, so the launch window matches the app. -->
+    <color name="launch_background">#0D1116</color>
+    <color name="brand">#FF7A1A</color>
+</resources>

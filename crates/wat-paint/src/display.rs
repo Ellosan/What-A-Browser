@@ -80,6 +80,108 @@ pub enum DisplayItem {
     },
 }
 
+impl ShadowItem {
+    fn scaled(&self, factor: f32) -> ShadowItem {
+        ShadowItem {
+            offset: (self.offset.0 * factor, self.offset.1 * factor),
+            blur: self.blur * factor,
+            spread: self.spread * factor,
+            ..*self
+        }
+    }
+}
+
+impl TextItem {
+    fn scaled(&self, factor: f32) -> TextItem {
+        let mut font = self.font.clone();
+        font.size *= factor;
+        font.letter_spacing *= factor;
+        font.word_spacing *= factor;
+        TextItem {
+            x: self.x * factor,
+            baseline: self.baseline * factor,
+            font,
+            extra_word_spacing: self.extra_word_spacing * factor,
+            shadows: self.shadows.iter().map(|s| s.scaled(factor)).collect(),
+            text: self.text.clone(),
+            ..*self
+        }
+    }
+}
+
+impl DisplayItem {
+    /// This item with every length multiplied by `factor`.
+    fn scaled(&self, factor: f32) -> DisplayItem {
+        let shape = |shape: &RoundedRect| shape.scaled(factor);
+        match self {
+            DisplayItem::PushClip(clip) => DisplayItem::PushClip(shape(clip)),
+            // Nothing to scale: these only move the stacks.
+            DisplayItem::PopClip => DisplayItem::PopClip,
+            DisplayItem::PushOpacity(alpha) => DisplayItem::PushOpacity(*alpha),
+            DisplayItem::PopOpacity => DisplayItem::PopOpacity,
+            DisplayItem::Fill { shape: rect, color } => DisplayItem::Fill {
+                shape: shape(rect),
+                color: *color,
+            },
+            DisplayItem::Gradient {
+                shape: rect,
+                gradient,
+            } => DisplayItem::Gradient {
+                shape: shape(rect),
+                gradient: gradient.scaled(factor),
+            },
+            DisplayItem::Border {
+                shape: rect,
+                widths,
+                colors,
+            } => DisplayItem::Border {
+                shape: shape(rect),
+                widths: widths.map(|width| width * factor),
+                colors: *colors,
+            },
+            DisplayItem::Shadow {
+                shape: rect,
+                shadow,
+            } => DisplayItem::Shadow {
+                shape: shape(rect),
+                shadow: shadow.scaled(factor),
+            },
+            DisplayItem::BackdropFilter {
+                shape: rect,
+                filter,
+            } => DisplayItem::BackdropFilter {
+                shape: shape(rect),
+                filter: Filter {
+                    // Only the blur is a length; the colour adjustments are
+                    // ratios and mean the same thing at any scale.
+                    blur: filter.blur * factor,
+                    ..*filter
+                },
+            },
+            DisplayItem::Text(text) => DisplayItem::Text(text.scaled(factor)),
+            DisplayItem::Image { shape: rect, image } => DisplayItem::Image {
+                shape: shape(rect),
+                image: image.clone(),
+            },
+            DisplayItem::Placeholder {
+                shape: rect,
+                label,
+                color,
+                font,
+            } => {
+                let mut font = font.clone();
+                font.size *= factor;
+                DisplayItem::Placeholder {
+                    shape: shape(rect),
+                    label: label.clone(),
+                    color: *color,
+                    font,
+                }
+            }
+        }
+    }
+}
+
 /// An ordered list of drawing operations for one frame.
 #[derive(Clone, Debug, Default)]
 pub struct DisplayList {
@@ -112,6 +214,22 @@ impl DisplayList {
         self.push(DisplayItem::PushClip(shape));
         body(self);
         self.push(DisplayItem::PopClip);
+    }
+
+    /// The same list at a different device pixel ratio.
+    ///
+    /// Everything above this point works in CSS pixels; a display with more
+    /// device pixels than that is handled here, at the very last moment, by
+    /// multiplying the geometry. Font sizes are scaled rather than the glyph
+    /// bitmaps, so text is rasterized at the size it will actually be drawn and
+    /// stays sharp instead of being blown up.
+    pub fn scaled(&self, factor: f32) -> DisplayList {
+        if (factor - 1.0).abs() < f32::EPSILON {
+            return self.clone();
+        }
+        DisplayList {
+            items: self.items.iter().map(|item| item.scaled(factor)).collect(),
+        }
     }
 
     /// Number of glass surfaces in the list, which is a useful signal in tests
@@ -188,5 +306,103 @@ mod tests {
             },
         });
         assert_eq!(list.backdrop_filter_count(), 1);
+    }
+    #[test]
+    fn scaling_multiplies_every_length() {
+        let mut list = DisplayList::new();
+        list.push(DisplayItem::Fill {
+            shape: RoundedRect::new(
+                Rect::new(10.0, 20.0, 30.0, 40.0),
+                wat_style::Corners::all(4.0),
+            ),
+            color: Color::BLACK,
+        });
+        list.push(DisplayItem::Text(TextItem {
+            x: 8.0,
+            baseline: 16.0,
+            text: "hi".to_string(),
+            font: FontRequest::new(12.0),
+            color: Color::BLACK,
+            extra_word_spacing: 2.0,
+            decoration: Default::default(),
+            decoration_color: Color::BLACK,
+            shadows: vec![ShadowItem {
+                offset: (1.0, 2.0),
+                blur: 3.0,
+                spread: 4.0,
+                color: Color::BLACK,
+                inset: false,
+            }],
+        }));
+        list.push(DisplayItem::BackdropFilter {
+            shape: shape(),
+            filter: Filter {
+                blur: 10.0,
+                saturate: 1.8,
+                ..Filter::NONE
+            },
+        });
+
+        let scaled = list.scaled(2.0);
+        match &scaled.items[0] {
+            DisplayItem::Fill { shape, .. } => {
+                assert_eq!(shape.rect, Rect::new(20.0, 40.0, 60.0, 80.0));
+                assert_eq!(shape.radii.top_left, 8.0);
+            }
+            other => panic!("got {other:?}"),
+        }
+        match &scaled.items[1] {
+            DisplayItem::Text(text) => {
+                assert_eq!(text.x, 16.0);
+                assert_eq!(text.baseline, 32.0);
+                assert_eq!(text.extra_word_spacing, 4.0);
+                // The font is scaled, not the glyphs: text is rasterized at the
+                // size it is drawn, so it stays sharp.
+                assert_eq!(text.font.size, 24.0);
+                assert_eq!(text.shadows[0].blur, 6.0);
+                assert_eq!(text.shadows[0].offset, (2.0, 4.0));
+            }
+            other => panic!("got {other:?}"),
+        }
+        match &scaled.items[2] {
+            DisplayItem::BackdropFilter { filter, .. } => {
+                assert_eq!(filter.blur, 20.0);
+                assert_eq!(filter.saturate, 1.8, "a ratio is not a length");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scaling_by_one_changes_nothing() {
+        let mut list = DisplayList::new();
+        list.push(DisplayItem::Fill {
+            shape: shape(),
+            color: Color::BLACK,
+        });
+        let scaled = list.scaled(1.0);
+        match (&list.items[0], &scaled.items[0]) {
+            (DisplayItem::Fill { shape: a, .. }, DisplayItem::Fill { shape: b, .. }) => {
+                assert_eq!(a.rect, b.rect)
+            }
+            _ => panic!("the item kind changed"),
+        }
+    }
+
+    #[test]
+    fn scaling_keeps_the_structure_intact() {
+        let mut list = DisplayList::new();
+        list.with_clip(shape(), |inner| {
+            inner.push(DisplayItem::PushOpacity(0.5));
+            inner.push(DisplayItem::Fill {
+                shape: shape(),
+                color: Color::BLACK,
+            });
+            inner.push(DisplayItem::PopOpacity);
+        });
+        let scaled = list.scaled(3.0);
+        assert_eq!(scaled.len(), list.len());
+        assert!(scaled.is_balanced(), "clip and opacity scopes must survive");
+        assert!(matches!(scaled.items[1], DisplayItem::PushOpacity(alpha) if alpha == 0.5));
     }
 }

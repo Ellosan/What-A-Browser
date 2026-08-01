@@ -46,6 +46,23 @@ impl RoundedRect {
         }
     }
 
+    /// The same shape with every length multiplied by `factor`.
+    ///
+    /// The rotation is an angle, so it is left alone; scaling is uniform, which
+    /// means a rotated shape stays the same shape.
+    pub fn scaled(&self, factor: f32) -> Self {
+        RoundedRect {
+            rect: Rect::new(
+                self.rect.x * factor,
+                self.rect.y * factor,
+                self.rect.width * factor,
+                self.rect.height * factor,
+            ),
+            radii: self.radii.map(|radius| radius * factor),
+            rotation: self.rotation,
+        }
+    }
+
     /// The axis-aligned box that contains the shape, rotation included.
     pub fn bounding_rect(&self) -> Rect {
         if self.rotation == 0.0 {
@@ -239,6 +256,17 @@ pub struct LinearGradient {
 }
 
 impl LinearGradient {
+    /// The same gradient with its line multiplied by `factor`.
+    ///
+    /// The stop positions are fractions of that line, so they do not scale.
+    pub fn scaled(&self, factor: f32) -> Self {
+        LinearGradient {
+            start: (self.start.0 * factor, self.start.1 * factor),
+            end: (self.end.0 * factor, self.end.1 * factor),
+            stops: self.stops.clone(),
+        }
+    }
+
     /// Builds the gradient line CSS defines for `angle` over `rect`.
     ///
     /// `angle` is in degrees, 0 pointing up and increasing clockwise.

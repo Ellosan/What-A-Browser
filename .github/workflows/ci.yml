@@ -42,6 +42,68 @@ jobs:
           cargo run --release -- shot about:home --offline -o smoke.png
           cargo run --release -- version
 
+  # The Android build is a different target, not a different codebase, so what
+  # this really checks is that the platform-specific paths still compile and
+  # that the app still packages.
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+
+      # Prefer the NDK already on the runner image; install one only if there is
+      # none. Either way the result is checked, so a missing NDK fails here with
+      # a clear message instead of somewhere inside cargo-ndk.
+      - name: Find an NDK
+        run: |
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ ! -d "$ndk/toolchains" ]; then
+            sdkmanager --install "ndk;$NDK_VERSION"
+            ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          fi
+          test -d "$ndk/toolchains" || { echo "no usable NDK at $ndk" >&2; exit 1; }
+          echo "using $ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+        env:
+          NDK_VERSION: "27.2.12479018"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # One ABI is built and packaged all the way to an APK, which is what
+      # proves the app still assembles. The other three are only type-checked:
+      # linking four debug libraries takes minutes and finds nothing that
+      # checking does not, and the release workflow builds them properly.
+      - name: Build the APK
+        run: ./android/build.sh debug arm64
+
+      # An APK with no library in it installs and then dies on launch, so what
+      # is inside is checked rather than assumed.
+      - name: Check what is in it
+        run: |
+          apk=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libwat_shell.so'
+          unzip -l "$apk" | grep -q 'AndroidManifest.xml'
+
+      - name: Check the other ABIs compile
+        run: |
+          for target in armv7-linux-androideabi i686-linux-android x86_64-linux-android; do
+            cargo ndk -t "$target" --platform 24 check -p wat-shell --lib
+          done
+
   lint:
     name: Format and lints
     runs-on: ubuntu-latest
