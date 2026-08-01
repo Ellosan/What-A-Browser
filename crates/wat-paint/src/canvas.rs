@@ -157,6 +157,25 @@ impl RoundedRect {
         }
         (0.5 - self.distance(x, y)).clamp(0.0, 1.0)
     }
+
+    /// A rectangle lying entirely inside the shape.
+    ///
+    /// Exact for square corners. For rounded ones it insets every side by the
+    /// largest radius, which is conservative — a rounded rectangle contains the
+    /// box inset that far, and giving up a band a few pixels wide costs nothing
+    /// next to what filling its interior analytically costs. `None` for a
+    /// rotated shape, whose interior is not axis-aligned.
+    pub fn solid_rect(&self) -> Option<Rect> {
+        if self.rotation != 0.0 || self.rect.is_empty() {
+            return None;
+        }
+        let inset = self.radii.max();
+        if inset <= 0.0 {
+            return Some(self.rect);
+        }
+        let rect = self.rect.inset(Sides::all(inset));
+        (!rect.is_empty()).then_some(rect)
+    }
 }
 
 /// Radii cannot exceed the box; CSS scales them down proportionally.
@@ -178,6 +197,26 @@ fn clamp_radii(rect: Rect, radii: Corners<f32>) -> Corners<f32> {
     radii
 }
 
+/// Antialiased coverage of a pixel against a plain axis-aligned rectangle.
+///
+/// This is `RoundedRect::sharp(rect).coverage(x, y)` with the corner-radius and
+/// rotation work stripped out. It is worth having separately because building a
+/// `RoundedRect` runs [`clamp_radii`], and the clip evaluated one per pixel per
+/// draw — several million times a frame, to reach the same answer this reaches
+/// with a handful of instructions.
+#[inline]
+fn sharp_coverage(rect: Rect, x: f32, y: f32) -> f32 {
+    if rect.is_empty() {
+        return 0.0;
+    }
+    let center = rect.center();
+    let qx = (x - center.x).abs() - rect.width / 2.0;
+    let qy = (y - center.y).abs() - rect.height / 2.0;
+    let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+    let distance = qx.max(qy).min(0.0) + (ox * ox + oy * oy).sqrt();
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
 /// A clip region: the intersection of a stack of rounded rectangles.
 #[derive(Clone, Debug, Default)]
 pub struct Clip {
@@ -195,8 +234,12 @@ impl Clip {
     }
 
     pub fn from_rect(rect: Rect) -> Self {
+        // The bounding box already describes a sharp rectangle exactly, so
+        // keeping one in `shapes` as well would evaluate the same edge twice —
+        // which also squared the coverage at the boundary instead of leaving it
+        // alone. `push` has always skipped sharp rectangles for this reason.
         Clip {
-            shapes: vec![RoundedRect::sharp(rect)],
+            shapes: Vec::new(),
             bounds: Some(rect),
         }
     }
@@ -220,6 +263,15 @@ impl Clip {
         self.bounds.is_some_and(|b| b.is_empty())
     }
 
+    /// A rectangle the clip covers completely, if it has one.
+    pub fn solid_rect(&self) -> Option<Rect> {
+        let mut area = self.bounds?;
+        for shape in &self.shapes {
+            area = area.intersection(&shape.solid_rect()?)?;
+        }
+        (!area.is_empty()).then_some(area)
+    }
+
     /// Coverage of the pixel at `(x, y)`, in `0.0..=1.0`.
     pub fn coverage(&self, x: f32, y: f32) -> f32 {
         if let Some(bounds) = self.bounds {
@@ -232,7 +284,7 @@ impl Clip {
             }
         }
         let mut coverage = match self.bounds {
-            Some(bounds) => RoundedRect::sharp(bounds).coverage(x, y),
+            Some(bounds) => sharp_coverage(bounds, x, y),
             None => 1.0,
         };
         for shape in &self.shapes {
@@ -425,6 +477,38 @@ impl Canvas {
         (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
     }
 
+    /// The pixels of `rect` whose centres lie at least half a pixel inside it.
+    ///
+    /// Given a rectangle known to be covered completely, these are the pixels
+    /// covered completely: for a pixel at `x` that means `x >= rect.x` and
+    /// `x <= rect.max_x() - 1`.
+    fn solid_box(&self, rect: Rect) -> Option<(u32, u32, u32, u32)> {
+        let area = rect.intersection(&self.bounds())?;
+        let x0 = area.x.ceil().max(0.0) as u32;
+        let y0 = area.y.ceil().max(0.0) as u32;
+        let x1 = (((area.max_x() - 1.0).floor() + 1.0).max(0.0) as u32).min(self.width);
+        let y1 = (((area.max_y() - 1.0).floor() + 1.0).max(0.0) as u32).min(self.height);
+        (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+    }
+
+    /// Writes `color` across one row, skipping the blend when it is opaque.
+    fn fill_row(&mut self, y: u32, x0: u32, x1: u32, color: Color) {
+        if color.a < 255 {
+            for x in x0..x1 {
+                self.blend(x, y, color, 1.0);
+            }
+            return;
+        }
+        let start = self.index(x0, y);
+        let end = start + (x1 - x0) as usize * 4;
+        for chunk in self.pixels[start..end].chunks_exact_mut(4) {
+            chunk[0] = color.r;
+            chunk[1] = color.g;
+            chunk[2] = color.b;
+            chunk[3] = 255;
+        }
+    }
+
     /// Fills a rounded rectangle.
     pub fn fill(&mut self, shape: RoundedRect, color: Color, clip: &Clip) {
         if color.a == 0 {
@@ -434,13 +518,42 @@ impl Canvas {
         else {
             return;
         };
+
+        // Almost every pixel a page draws is in the interior of an unrotated
+        // rectangle, where the coverage is exactly one. Evaluating a signed
+        // distance for each of them anyway is what made a single full-window
+        // fill take tens of milliseconds, so the interior is found once and
+        // filled with no geometry at all; only the antialiased fringe around it
+        // still needs the general path. Rounded corners narrow the interior but
+        // do not remove it, which matters because the page itself is drawn under
+        // a rounded clip.
+        let interior = shape
+            .solid_rect()
+            .zip(clip.solid_rect())
+            .and_then(|(shape_solid, clip_solid)| shape_solid.intersection(&clip_solid))
+            .and_then(|solid| self.solid_box(solid));
+
         for y in y0..y1 {
             let py = y as f32 + 0.5;
-            for x in x0..x1 {
-                let px = x as f32 + 0.5;
-                let coverage = shape.coverage(px, py) * clip.coverage(px, py);
-                self.blend(x, y, color, coverage);
+            // The fully-covered columns on this row, empty if it has none.
+            let (solid_start, solid_end) = match interior {
+                Some((ix0, iy0, ix1, iy1)) if y >= iy0 && y < iy1 => {
+                    (ix0.clamp(x0, x1), ix1.clamp(x0, x1))
+                }
+                _ => (x1, x1),
+            };
+            let general = |canvas: &mut Self, from: u32, to: u32| {
+                for x in from..to {
+                    let px = x as f32 + 0.5;
+                    let coverage = shape.coverage(px, py) * clip.coverage(px, py);
+                    canvas.blend(x, y, color, coverage);
+                }
+            };
+            general(self, x0, solid_start);
+            if solid_end > solid_start {
+                self.fill_row(y, solid_start, solid_end, color);
             }
+            general(self, solid_end.max(solid_start), x1);
         }
     }
 
@@ -863,12 +976,15 @@ pub fn blur_alpha(data: &mut [u8], width: usize, height: usize, sigma: f32) {
         return;
     }
     let mut buffer: Vec<f32> = data.iter().map(|v| *v as f32).collect();
+    // A Gaussian is approximated by three box passes; they share one scratch
+    // buffer rather than each allocating a copy of the whole region.
+    let mut scratch = vec![0.0f32; buffer.len()];
     for size in box_sizes_for_sigma(sigma) {
         let radius = size / 2;
         if radius == 0 {
             continue;
         }
-        box_blur_f32(&mut buffer, width, height, radius, 1);
+        box_blur_f32(&mut buffer, &mut scratch, width, height, radius, 1);
     }
     for (target, value) in data.iter_mut().zip(buffer) {
         *target = value.clamp(0.0, 255.0).round() as u8;
@@ -880,19 +996,25 @@ pub fn blur_rgba_f32(data: &mut [f32], width: usize, height: usize, sigma: f32) 
     if sigma <= 0.0 || width == 0 || height == 0 {
         return;
     }
+    let mut scratch = vec![0.0f32; data.len()];
     for size in box_sizes_for_sigma(sigma) {
         let radius = size / 2;
         if radius == 0 {
             continue;
         }
-        box_blur_f32(data, width, height, radius, 4);
+        box_blur_f32(data, &mut scratch, width, height, radius, 4);
     }
 }
 
 /// One separable box blur pass over `channels`-interleaved data.
-fn box_blur_f32(data: &mut [f32], width: usize, height: usize, radius: usize, channels: usize) {
-    let mut scratch = data.to_vec();
-
+fn box_blur_f32(
+    data: &mut [f32],
+    scratch: &mut [f32],
+    width: usize,
+    height: usize,
+    radius: usize,
+    channels: usize,
+) {
     // Horizontal pass.
     for row in 0..height {
         let row_start = row * width * channels;
@@ -916,24 +1038,33 @@ fn box_blur_f32(data: &mut [f32], width: usize, height: usize, radius: usize, ch
         }
     }
 
-    // Vertical pass.
-    for column in 0..width {
-        for channel in 0..channels {
-            let mut sum = 0.0f32;
-            let window = (radius * 2 + 1) as f32;
-            for offset in 0..=radius {
-                let row = offset.min(height - 1);
-                sum += scratch[(row * width + column) * channels + channel];
-            }
-            sum += scratch[column * channels + channel] * radius as f32;
-
-            for row in 0..height {
-                data[(row * width + column) * channels + channel] = sum / window;
-                let leaving = row.saturating_sub(radius);
-                let entering = (row + radius + 1).min(height - 1);
-                sum -= scratch[(leaving * width + column) * channels + channel];
-                sum += scratch[(entering * width + column) * channels + channel];
-            }
+    // Vertical pass, walked a row at a time rather than a column at a time.
+    //
+    // Sliding a window down one column touches a different cache line for every
+    // pixel it reads, and for a window-sized region that missed on essentially
+    // every access. Keeping one running sum per column instead means both reads
+    // and writes go straight along memory. The arithmetic per column is
+    // unchanged, and so is the result.
+    let stride = width * channels;
+    let window = (radius * 2 + 1) as f32;
+    let mut sums = vec![0.0f32; stride];
+    for offset in 0..=radius {
+        let row = offset.min(height - 1);
+        for (sum, value) in sums.iter_mut().zip(&scratch[row * stride..][..stride]) {
+            *sum += *value;
+        }
+    }
+    for (sum, value) in sums.iter_mut().zip(&scratch[..stride]) {
+        *sum += *value * radius as f32;
+    }
+    for row in 0..height {
+        let leaving = row.saturating_sub(radius) * stride;
+        let entering = (row + radius + 1).min(height - 1) * stride;
+        let out = row * stride;
+        for index in 0..stride {
+            data[out + index] = sums[index] / window;
+            sums[index] -= scratch[leaving + index];
+            sums[index] += scratch[entering + index];
         }
     }
 }
