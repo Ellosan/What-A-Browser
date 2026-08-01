@@ -850,28 +850,41 @@ impl Canvas {
         let Some((x0, y0, x1, y1)) = self.pixel_range(area, clip) else {
             return;
         };
-        let mask_width = (x1 - x0) as usize;
-        let mask_height = (y1 - y0) as usize;
+        let area_width = (x1 - x0) as usize;
+        let area_height = (y1 - y0) as usize;
+        // A shadow's mask exists only to be blurred, so a wide one is built and
+        // blurred at a fraction of the size and read back interpolated.
+        let factor = blur_scale(blur_radius);
+        let mask_width = area_width.div_ceil(factor);
+        let mask_height = area_height.div_ceil(factor);
         let mut mask = vec![0u8; mask_width * mask_height];
-        // The inside of the shadow's own shape is opaque in the mask, so it is
-        // written directly rather than derived from a distance field per pixel.
-        let mask_interior = self.solid_interior(&shadow_shape, &Clip::unbounded());
+        // At full resolution the inside of the shadow's own shape is opaque, so
+        // it is written directly rather than derived from a distance field per
+        // pixel. Reduced, there are few enough samples that it does not matter.
+        let mask_interior = (factor == 1)
+            .then(|| self.solid_interior(&shadow_shape, &Clip::unbounded()))
+            .flatten();
         for row in 0..mask_height {
-            let y = y0 + row as u32;
-            let py = y as f32 + 0.5;
+            let y = y0 + (row * factor) as u32;
+            let py = y0 as f32 + (row * factor) as f32 + factor as f32 / 2.0;
             let (solid_start, solid_end) = Self::solid_columns(mask_interior, y, x0, x1);
             for column in 0..mask_width {
-                let x = x0 + column as u32;
+                let x = x0 + (column * factor) as u32;
                 mask[row * mask_width + column] = if x >= solid_start && x < solid_end {
                     255
                 } else {
-                    let px = x as f32 + 0.5;
+                    let px = x0 as f32 + (column * factor) as f32 + factor as f32 / 2.0;
                     (shadow_shape.coverage(px, py) * 255.0).round() as u8
                 };
             }
         }
         if blur_radius > 0.0 {
-            blur_alpha(&mut mask, mask_width, mask_height, blur_radius / 2.0);
+            blur_alpha(
+                &mut mask,
+                mask_width,
+                mask_height,
+                blur_radius / 2.0 / factor as f32,
+            );
         }
 
         // The box that casts the shadow hides it completely, and for a large
@@ -879,23 +892,23 @@ impl Canvas {
         // interior is skipped outright instead of being computed and multiplied
         // away to nothing.
         let occluded = self.solid_interior(&shape, &Clip::unbounded());
-        for row in 0..mask_height {
+        for row in 0..area_height {
             let y = y0 + row as u32;
             let py = y as f32 + 0.5;
             let (hidden_start, hidden_end) = Self::solid_columns(occluded, y, x0, x1);
-            for column in 0..mask_width {
+            for column in 0..area_width {
                 let x = x0 + column as u32;
                 if x >= hidden_start && x < hidden_end {
                     continue;
                 }
-                let alpha = mask[row * mask_width + column];
-                if alpha == 0 {
+                let alpha = sample_mask(&mask, mask_width, mask_height, factor, column, row);
+                if alpha <= 0.0 {
                     continue;
                 }
                 let px = x as f32 + 0.5;
                 // The shadow does not show through the box that casts it.
                 let occlusion = shape.coverage(px, py);
-                let coverage = (alpha as f32 / 255.0) * (1.0 - occlusion) * clip.coverage(px, py);
+                let coverage = alpha * (1.0 - occlusion) * clip.coverage(px, py);
                 self.blend(x, y, color, coverage);
             }
         }
@@ -1198,6 +1211,46 @@ pub fn blur_rgba_f32(data: &mut [f32], width: usize, height: usize, sigma: f32) 
 }
 
 /// One separable box blur pass over `channels`-interleaved data.
+/// How much to shrink a blur by before computing it.
+///
+/// A blur discards detail, so a wide one does not need full resolution: the
+/// saving is quadratic in the factor and the difference is not visible. Narrow
+/// blurs are left exact, where it would be.
+fn blur_scale(radius: f32) -> usize {
+    if radius >= 24.0 {
+        4
+    } else if radius >= 12.0 {
+        2
+    } else {
+        1
+    }
+}
+
+/// Bilinear read of a single-channel mask held at `1/factor` scale.
+fn sample_mask(
+    mask: &[u8],
+    width: usize,
+    height: usize,
+    factor: usize,
+    column: usize,
+    row: usize,
+) -> f32 {
+    if factor == 1 {
+        return mask[row * width + column] as f32 / 255.0;
+    }
+    let fx = ((column as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let fy = ((row as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let x0 = (fx.floor() as usize).min(width - 1);
+    let y0 = (fy.floor() as usize).min(height - 1);
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+    let at = |x: usize, y: usize| mask[y * width + x] as f32;
+    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+    (top + (bottom - top) * ty) / 255.0
+}
+
 /// Reads a downsampled region at the full-resolution pixel `(column, row)`.
 ///
 /// Bilinear, so a quarter-scale blur comes back as a smooth gradient rather than
