@@ -51,9 +51,23 @@ ndk_args=()
 for abi in "${abis[@]}"; do
     ndk_args+=(-t "$abi")
 done
+# `cargo ndk` copies a library into place only when it is newer than what is
+# already there. Both profiles write to the same filename, so building debug and
+# then release left the debug library sitting in the APK — a release APK with a
+# debug build inside it, reported as a success. Clear the destination rather than
+# trust it.
+for abi in "${abis[@]}"; do
+    rm -f "$jni_libs/$abi/libwat_shell.so"
+done
+
 # API 24 is the app's minSdk; the NDK needs telling separately.
 cargo ndk "${ndk_args[@]}" --platform 24 -o "$jni_libs" \
     build -p wat-shell --lib $([ "$profile" = release ] && echo --release || true)
+
+for abi in "${abis[@]}"; do
+    test -f "$jni_libs/$abi/libwat_shell.so" \
+        || { echo "cargo ndk produced no library for $abi" >&2; exit 1; }
+done
 
 echo "==> assembling the APK"
 gradle_task=$([ "$profile" = release ] && echo assembleRelease || echo assembleDebug)
@@ -72,6 +86,8 @@ else
 fi
 (cd "$android_dir" && "$gradle_cmd" --no-daemon "$gradle_task")
 
-apk=$(find "$android_dir/app/build/outputs/apk" -name '*.apk' -newer "$android_dir/app/build.gradle.kts" | head -1)
-apk=${apk:-$(find "$android_dir/app/build/outputs/apk" -name '*.apk' | head -1)}
+# Scoped to the profile that was asked for: searching the whole tree finds the
+# other profile's leftovers and reports the wrong file.
+apk=$(find "$android_dir/app/build/outputs/apk/$profile" -name '*.apk' | head -1)
+test -n "$apk" || { echo "no $profile APK was produced" >&2; exit 1; }
 echo "==> $apk"
