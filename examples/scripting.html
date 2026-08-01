@@ -107,11 +107,14 @@
   const odds = document.querySelectorAll('.odd').length;
   document.getElementById('total').textContent = `${total} rows, ${odds} odd`;
 
-  const card = document.querySelector('.card');
-  const box = card.getBoundingClientRect();
-  document.getElementById('measured').textContent =
-    `The first card is ${Math.round(box.width)}×${Math.round(box.height)} ` +
-    `in a ${window.innerWidth}px viewport.`;
+  // Measuring waits for `load`: rectangles are a snapshot taken before the
+  // script ran, and by then this one has changed the page.
+  window.addEventListener('load', () => {
+    const box = document.querySelector('.card').getBoundingClientRect();
+    document.getElementById('measured').textContent =
+      `The first card is ${Math.round(box.width)}×${Math.round(box.height)} ` +
+      `in a ${window.innerWidth}px viewport.`;
+  });
 
   let clicks = 0;
   document.addEventListener('click', (event) => {

@@ -172,6 +172,12 @@ the browser's own interface: a step budget and a maximum call depth. A runaway
 loop stops in well under a second and cannot be caught by the page, so a bad
 script spoils its own page and nothing else.
 
+![examples/scripting.html: a page that builds itself](docs/images/scripting.png)
+
+That page is `examples/scripting.html`, rendered by this repository. Everything
+in the two upper cards was created by the script — including the measurement,
+which is the real layout.
+
 `docs/JAVASCRIPT.md` covers what the engine supports, what it does not, and how
 to embed it.
 
