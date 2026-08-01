@@ -133,4 +133,20 @@ fn main() {
 
     println!();
     time("to_argb32 (present copy)", 50, || canvas.to_argb32());
+
+    // The whole browser, at the sizes people actually use.
+    println!("\nfull frames, real home page:");
+    for (w, h) in [(1280.0f32, 800.0f32), (1920.0, 1080.0), (2560.0, 1440.0)] {
+        let mut browser = wat_shell::Browser::new(&wat_shell::ShellConfig {
+            offline: true,
+            size: Size2D::new(w, h),
+            ..Default::default()
+        })
+        .expect("the offline browser starts");
+        let mut window = Canvas::new(w as u32, h as u32);
+        let ms = time(&format!("{w:.0}x{h:.0}"), 10, || {
+            browser.render_into(&mut window)
+        });
+        println!("      {:.1} fps", 1000.0 / ms);
+    }
 }

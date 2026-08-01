@@ -148,11 +148,20 @@ impl App {
             return;
         };
 
-        if self.canvas.width() != width || self.canvas.height() != height {
+        let resized = self.canvas.width() != width || self.canvas.height() != height;
+        if resized {
             self.canvas = Canvas::new(width, height);
         }
-        // The canvas is in device pixels; everything above is in CSS pixels.
-        self.browser.render_into_scaled(&mut self.canvas, scale);
+        // A redraw request does not mean anything changed: the compositor asks
+        // for one when the window is exposed, and the event loop asks for one on
+        // every turn while a page has a timer pending. Re-rendering regardless
+        // meant repainting the whole window, at tens of milliseconds a frame,
+        // to arrive at the pixels already on screen. The canvas is kept, so when
+        // nothing is dirty the frame just gets presented again.
+        if resized || self.browser.needs_redraw {
+            // The canvas is in device pixels; everything above is in CSS pixels.
+            self.browser.render_into_scaled(&mut self.canvas, scale);
+        }
 
         let Some(surface) = &mut self.surface else {
             return;
@@ -221,7 +230,14 @@ impl ApplicationHandler for App {
         if self.browser.has_pending_script_work() {
             self.browser.run_script_timers();
             self.sync_title();
-            self.request_redraw();
+            // Only if running them actually changed something. A timer that
+            // fires without touching the document — or a page still waiting for
+            // one to come due — used to request a frame on every turn of the
+            // loop, which with `Poll` below is a full repaint as fast as the
+            // renderer can manage, forever.
+            if self.browser.needs_redraw {
+                self.request_redraw();
+            }
         }
         event_loop.set_control_flow(if self.browser.has_pending_script_work() {
             ControlFlow::Poll
