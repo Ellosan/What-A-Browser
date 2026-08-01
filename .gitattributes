@@ -1,0 +1,9 @@
+# Check every text file out with LF endings, on every platform.
+#
+# The CSS and HTML parsers cope with CRLF, but tests that compare exact strings
+# would not, and a stylesheet that differs between platforms is a bad way to
+# find that out.
+* text=auto eol=lf
+
+# Screenshots are binary and must not be touched.
+*.png binary

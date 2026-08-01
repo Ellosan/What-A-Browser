@@ -511,11 +511,33 @@ mod tests {
 
     #[test]
     fn missing_files_report_an_io_error() {
-        let address = Address::parse("file:///definitely/not/here.html").unwrap();
-        assert!(matches!(
-            HttpLoader::default().load(&address),
-            Err(LoadError::Io(_))
-        ));
+        // Built from a real directory rather than written out by hand: a
+        // Unix-shaped path such as `/nope.html` has no Windows equivalent, so
+        // there it is a bad URL rather than a missing file, and the test would
+        // be asserting the wrong thing.
+        let missing = std::env::temp_dir().join("wat-definitely-not-here.html");
+        std::fs::remove_file(&missing).ok();
+        let url = url::Url::from_file_path(&missing).unwrap();
+        let address = Address::parse(url.as_str()).unwrap();
+
+        match HttpLoader::default().load(&address) {
+            Err(LoadError::Io(message)) => {
+                assert!(message.contains("wat-definitely-not-here"), "{message}")
+            }
+            other => panic!("expected an IO error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_file_url_that_names_no_path_on_this_platform_is_a_bad_url() {
+        // `to_file_path` refuses a URL it cannot map, and that is a URL problem
+        // rather than a missing file. On Unix every absolute path maps, so this
+        // uses a host, which never does.
+        let address = Address::parse("file://a-host/share/page.html").unwrap();
+        match HttpLoader::default().load(&address) {
+            Err(LoadError::BadUrl(_)) | Err(LoadError::Io(_)) => {}
+            other => panic!("expected the URL to be rejected, got {other:?}"),
+        }
     }
 
     #[test]

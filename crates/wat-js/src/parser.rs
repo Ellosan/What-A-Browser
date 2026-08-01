@@ -916,10 +916,7 @@ impl Parser {
     fn binary_expression(&mut self, min_precedence: u8) -> Result<Expr, SyntaxError> {
         let mut left = self.unary_or_higher()?;
 
-        loop {
-            let Some((precedence, right_associative, op)) = self.binary_operator() else {
-                break;
-            };
+        while let Some((precedence, right_associative, op)) = self.binary_operator() {
             if precedence < min_precedence {
                 break;
             }

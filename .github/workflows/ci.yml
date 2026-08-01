@@ -31,8 +31,10 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
 
+      # `--no-fail-fast` so one platform-specific failure does not hide the
+      # rest behind it.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
       # The renderer runs headlessly, so a screenshot is a real smoke test.
       - name: Render a page without a display
