@@ -20,6 +20,7 @@ wat-script.workspace = true
 wat-style.workspace = true
 wat-text.workspace = true
 wat-theme.workspace = true
+wat-web.workspace = true
 log.workspace = true
 
 [dev-dependencies]

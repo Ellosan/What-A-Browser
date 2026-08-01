@@ -26,10 +26,12 @@
 //! only has to implement the same trait for the shell to drive it.
 
 pub mod about;
+pub mod engine;
 pub mod page;
 pub mod session;
 
 pub use about::{ENGINE_NAME, VERSION};
+pub use engine::WatEngine;
 pub use page::{Page, PageImages, PageState};
 pub use session::{History, Session, Tab, TabId};
 

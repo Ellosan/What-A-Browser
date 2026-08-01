@@ -157,6 +157,45 @@ impl RoundedRect {
         }
         (0.5 - self.distance(x, y)).clamp(0.0, 1.0)
     }
+
+    /// The largest axis-aligned rectangle lying entirely inside the shape.
+    ///
+    /// Exact for square corners. A rounded rectangle contains two full-length
+    /// bands — its whole width inset vertically by the radius, and its whole
+    /// height inset horizontally by it — and this returns the bigger one.
+    ///
+    /// Insetting all four sides instead would be simpler and is what this did
+    /// first, but it is useless for exactly the shape the chrome is built from:
+    /// a pill whose radius is half its height has no room left once both the top
+    /// and the bottom are inset, while the band across it is almost the whole
+    /// shape. `None` for a rotated shape, whose interior is not axis-aligned.
+    pub fn solid_rect(&self) -> Option<Rect> {
+        if self.rotation != 0.0 || self.rect.is_empty() {
+            return None;
+        }
+        let radius = self.radii.max();
+        if radius <= 0.0 {
+            return Some(self.rect);
+        }
+        let bands = [
+            self.rect.inset(Sides {
+                top: radius,
+                bottom: radius,
+                left: 0.0,
+                right: 0.0,
+            }),
+            self.rect.inset(Sides {
+                top: 0.0,
+                bottom: 0.0,
+                left: radius,
+                right: radius,
+            }),
+        ];
+        bands
+            .into_iter()
+            .filter(|band| !band.is_empty())
+            .max_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
+    }
 }
 
 /// Radii cannot exceed the box; CSS scales them down proportionally.
@@ -178,6 +217,26 @@ fn clamp_radii(rect: Rect, radii: Corners<f32>) -> Corners<f32> {
     radii
 }
 
+/// Antialiased coverage of a pixel against a plain axis-aligned rectangle.
+///
+/// This is `RoundedRect::sharp(rect).coverage(x, y)` with the corner-radius and
+/// rotation work stripped out. It is worth having separately because building a
+/// `RoundedRect` runs [`clamp_radii`], and the clip evaluated one per pixel per
+/// draw — several million times a frame, to reach the same answer this reaches
+/// with a handful of instructions.
+#[inline]
+fn sharp_coverage(rect: Rect, x: f32, y: f32) -> f32 {
+    if rect.is_empty() {
+        return 0.0;
+    }
+    let center = rect.center();
+    let qx = (x - center.x).abs() - rect.width / 2.0;
+    let qy = (y - center.y).abs() - rect.height / 2.0;
+    let (ox, oy) = (qx.max(0.0), qy.max(0.0));
+    let distance = qx.max(qy).min(0.0) + (ox * ox + oy * oy).sqrt();
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
 /// A clip region: the intersection of a stack of rounded rectangles.
 #[derive(Clone, Debug, Default)]
 pub struct Clip {
@@ -195,8 +254,12 @@ impl Clip {
     }
 
     pub fn from_rect(rect: Rect) -> Self {
+        // The bounding box already describes a sharp rectangle exactly, so
+        // keeping one in `shapes` as well would evaluate the same edge twice —
+        // which also squared the coverage at the boundary instead of leaving it
+        // alone. `push` has always skipped sharp rectangles for this reason.
         Clip {
-            shapes: vec![RoundedRect::sharp(rect)],
+            shapes: Vec::new(),
             bounds: Some(rect),
         }
     }
@@ -220,6 +283,22 @@ impl Clip {
         self.bounds.is_some_and(|b| b.is_empty())
     }
 
+    /// A rectangle inside `limit` that the clip covers completely.
+    ///
+    /// The caller supplies the limit because an unbounded clip covers
+    /// everything, and "everything" has no useful rectangle — for a canvas it is
+    /// the canvas.
+    pub fn solid_rect_within(&self, limit: Rect) -> Option<Rect> {
+        let mut area = match self.bounds {
+            Some(bounds) => bounds.intersection(&limit)?,
+            None => limit,
+        };
+        for shape in &self.shapes {
+            area = area.intersection(&shape.solid_rect()?)?;
+        }
+        (!area.is_empty()).then_some(area)
+    }
+
     /// Coverage of the pixel at `(x, y)`, in `0.0..=1.0`.
     pub fn coverage(&self, x: f32, y: f32) -> f32 {
         if let Some(bounds) = self.bounds {
@@ -232,7 +311,7 @@ impl Clip {
             }
         }
         let mut coverage = match self.bounds {
-            Some(bounds) => RoundedRect::sharp(bounds).coverage(x, y),
+            Some(bounds) => sharp_coverage(bounds, x, y),
             None => 1.0,
         };
         for shape in &self.shapes {
@@ -283,19 +362,28 @@ impl LinearGradient {
         }
     }
 
-    fn sample(&self, x: f32, y: f32) -> Color {
-        if self.stops.is_empty() {
-            return Color::TRANSPARENT;
-        }
+    /// The gradient's line, resolved once so a fill need not redo it per pixel.
+    ///
+    /// Returns the start point, the axis, and the reciprocal of its squared
+    /// length, which turns the per-pixel projection into two multiplies.
+    fn line(&self) -> ((f32, f32), (f32, f32), f32) {
         let dx = self.end.0 - self.start.0;
         let dy = self.end.1 - self.start.1;
         let length_squared = dx * dx + dy * dy;
-        let t = if length_squared <= f32::EPSILON {
+        let inverse = if length_squared <= f32::EPSILON {
             0.0
         } else {
-            (((x - self.start.0) * dx + (y - self.start.1) * dy) / length_squared).clamp(0.0, 1.0)
+            1.0 / length_squared
         };
+        (self.start, (dx, dy), inverse)
+    }
 
+    /// The colour at `t` along the gradient line, clamped to its ends.
+    fn color_at(&self, t: f32) -> Color {
+        if self.stops.is_empty() {
+            return Color::TRANSPARENT;
+        }
+        let t = t.clamp(0.0, 1.0);
         let mut previous = self.stops[0];
         if t <= previous.0 {
             return previous.1;
@@ -398,17 +486,65 @@ impl Canvas {
     }
 
     /// Blends `color` over the pixel using source-over with extra `coverage`.
+    /// Composites `color` at `coverage` onto one pixel.
+    ///
+    /// This is the innermost operation of every primitive there is, so it works
+    /// on the buffer directly rather than through the bounds-checked accessors
+    /// and the general `Color::over`. Two shortcuts carry most of the traffic:
+    /// a fully opaque result is a straight write, and compositing onto an opaque
+    /// backdrop — which is nearly everything, since the window has a background —
+    /// reduces source-over to one interpolation per channel with no division.
     pub fn blend(&mut self, x: u32, y: u32, color: Color, coverage: f32) {
-        if coverage <= 0.0 || color.a == 0 {
+        if coverage <= 0.0 || color.a == 0 || x >= self.width || y >= self.height {
             return;
         }
-        let source = if coverage >= 1.0 {
-            color
-        } else {
-            color.scale_alpha(coverage)
+        // Quantized to 8 bits before compositing, as scaling the colour's alpha
+        // used to do, so the arithmetic below is the same arithmetic.
+        let scaled =
+            ((color.alpha_f32() * coverage.min(1.0)).clamp(0.0, 1.0) * 255.0).round() as u8;
+        if scaled == 0 {
+            return;
+        }
+        let alpha = scaled as f32 / 255.0;
+        let index = self.index(x, y);
+        let target = &mut self.pixels[index..index + 4];
+
+        if scaled == 255 {
+            target[0] = color.r;
+            target[1] = color.g;
+            target[2] = color.b;
+            target[3] = 255;
+            return;
+        }
+        if target[3] == 255 {
+            let lerp =
+                |dst: u8, src: u8| (dst as f32 + (src as f32 - dst as f32) * alpha).round() as u8;
+            target[0] = lerp(target[0], color.r);
+            target[1] = lerp(target[1], color.g);
+            target[2] = lerp(target[2], color.b);
+            return;
+        }
+
+        let backdrop = target[3] as f32 / 255.0;
+        let out = alpha + backdrop * (1.0 - alpha);
+        if out <= 0.0 {
+            target.fill(0);
+            return;
+        }
+        let channel = |dst: u8, src: u8| {
+            let s = src as f32 / 255.0;
+            let d = dst as f32 / 255.0;
+            ((s * alpha + d * backdrop * (1.0 - alpha)) / out).clamp(0.0, 1.0)
         };
-        let blended = source.over(self.pixel(x, y));
-        self.set_pixel(x, y, blended);
+        let (r, g, b) = (
+            channel(target[0], color.r),
+            channel(target[1], color.g),
+            channel(target[2], color.b),
+        );
+        target[0] = (r * 255.0).round() as u8;
+        target[1] = (g * 255.0).round() as u8;
+        target[2] = (b * 255.0).round() as u8;
+        target[3] = (out.clamp(0.0, 1.0) * 255.0).round() as u8;
     }
 
     /// The integer pixel range a shape touches, clipped to the canvas.
@@ -425,6 +561,62 @@ impl Canvas {
         (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
     }
 
+    /// The pixels of `rect` whose centres lie at least half a pixel inside it.
+    ///
+    /// Given a rectangle known to be covered completely, these are the pixels
+    /// covered completely: for a pixel at `x` that means `x >= rect.x` and
+    /// `x <= rect.max_x() - 1`.
+    fn solid_box(&self, rect: Rect) -> Option<(u32, u32, u32, u32)> {
+        let area = rect.intersection(&self.bounds())?;
+        let x0 = area.x.ceil().max(0.0) as u32;
+        let y0 = area.y.ceil().max(0.0) as u32;
+        let x1 = (((area.max_x() - 1.0).floor() + 1.0).max(0.0) as u32).min(self.width);
+        let y1 = (((area.max_y() - 1.0).floor() + 1.0).max(0.0) as u32).min(self.height);
+        (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+    }
+
+    /// The pixels that `shape` under `clip` covers completely, if any.
+    fn solid_interior(&self, shape: &RoundedRect, clip: &Clip) -> Option<(u32, u32, u32, u32)> {
+        let shape_solid = shape.solid_rect()?;
+        let solid = clip
+            .solid_rect_within(self.bounds())?
+            .intersection(&shape_solid)?;
+        self.solid_box(solid)
+    }
+
+    /// The fully-covered columns of row `y`, given an interior box.
+    fn solid_columns(
+        interior: Option<(u32, u32, u32, u32)>,
+        y: u32,
+        x0: u32,
+        x1: u32,
+    ) -> (u32, u32) {
+        match interior {
+            Some((ix0, iy0, ix1, iy1)) if y >= iy0 && y < iy1 => {
+                (ix0.clamp(x0, x1), ix1.clamp(x0, x1))
+            }
+            _ => (x1, x1),
+        }
+    }
+
+    /// Writes `color` across one row, skipping the blend when it is opaque.
+    fn fill_row(&mut self, y: u32, x0: u32, x1: u32, color: Color) {
+        if color.a < 255 {
+            for x in x0..x1 {
+                self.blend(x, y, color, 1.0);
+            }
+            return;
+        }
+        let start = self.index(x0, y);
+        let end = start + (x1 - x0) as usize * 4;
+        for chunk in self.pixels[start..end].chunks_exact_mut(4) {
+            chunk[0] = color.r;
+            chunk[1] = color.g;
+            chunk[2] = color.b;
+            chunk[3] = 255;
+        }
+    }
+
     /// Fills a rounded rectangle.
     pub fn fill(&mut self, shape: RoundedRect, color: Color, clip: &Clip) {
         if color.a == 0 {
@@ -434,13 +626,32 @@ impl Canvas {
         else {
             return;
         };
+
+        // Almost every pixel a page draws is in the interior of an unrotated
+        // rectangle, where the coverage is exactly one. Evaluating a signed
+        // distance for each of them anyway is what made a single full-window
+        // fill take tens of milliseconds, so the interior is found once and
+        // filled with no geometry at all; only the antialiased fringe around it
+        // still needs the general path. Rounded corners narrow the interior but
+        // do not remove it, which matters because the page itself is drawn under
+        // a rounded clip.
+        let interior = self.solid_interior(&shape, clip);
+
         for y in y0..y1 {
             let py = y as f32 + 0.5;
-            for x in x0..x1 {
-                let px = x as f32 + 0.5;
-                let coverage = shape.coverage(px, py) * clip.coverage(px, py);
-                self.blend(x, y, color, coverage);
+            let (solid_start, solid_end) = Self::solid_columns(interior, y, x0, x1);
+            let general = |canvas: &mut Self, from: u32, to: u32| {
+                for x in from..to {
+                    let px = x as f32 + 0.5;
+                    let coverage = shape.coverage(px, py) * clip.coverage(px, py);
+                    canvas.blend(x, y, color, coverage);
+                }
+            };
+            general(self, x0, solid_start);
+            if solid_end > solid_start {
+                self.fill_row(y, solid_start, solid_end, color);
             }
+            general(self, solid_end.max(solid_start), x1);
         }
     }
 
@@ -450,15 +661,31 @@ impl Canvas {
         else {
             return;
         };
+        // Each pixel needs its own colour, so unlike a solid fill there is no
+        // row to write in one go — but the coverage in the interior is still
+        // known to be one, and not asking for it twice per pixel is most of the
+        // cost of a large gradient.
+        let interior = self.solid_interior(&shape, clip);
+        // The gradient line is the same for every pixel, so it is resolved once
+        // and the projection walked incrementally along the row.
+        let (start, axis, inverse) = gradient.line();
+
         for y in y0..y1 {
             let py = y as f32 + 0.5;
+            let (solid_start, solid_end) = Self::solid_columns(interior, y, x0, x1);
+            let row_term = (py - start.1) * axis.1;
             for x in x0..x1 {
                 let px = x as f32 + 0.5;
-                let coverage = shape.coverage(px, py) * clip.coverage(px, py);
+                let coverage = if x >= solid_start && x < solid_end {
+                    1.0
+                } else {
+                    shape.coverage(px, py) * clip.coverage(px, py)
+                };
                 if coverage <= 0.0 {
                     continue;
                 }
-                self.blend(x, y, gradient.sample(px, py), coverage);
+                let t = ((px - start.0) * axis.0 + row_term) * inverse;
+                self.blend(x, y, gradient.color_at(t), coverage);
             }
         }
     }
@@ -623,34 +850,65 @@ impl Canvas {
         let Some((x0, y0, x1, y1)) = self.pixel_range(area, clip) else {
             return;
         };
-        let mask_width = (x1 - x0) as usize;
-        let mask_height = (y1 - y0) as usize;
+        let area_width = (x1 - x0) as usize;
+        let area_height = (y1 - y0) as usize;
+        // A shadow's mask exists only to be blurred, so a wide one is built and
+        // blurred at a fraction of the size and read back interpolated.
+        let factor = blur_scale(blur_radius);
+        let mask_width = area_width.div_ceil(factor);
+        let mask_height = area_height.div_ceil(factor);
         let mut mask = vec![0u8; mask_width * mask_height];
+        // At full resolution the inside of the shadow's own shape is opaque, so
+        // it is written directly rather than derived from a distance field per
+        // pixel. Reduced, there are few enough samples that it does not matter.
+        let mask_interior = (factor == 1)
+            .then(|| self.solid_interior(&shadow_shape, &Clip::unbounded()))
+            .flatten();
         for row in 0..mask_height {
-            let py = (y0 + row as u32) as f32 + 0.5;
+            let y = y0 + (row * factor) as u32;
+            let py = y0 as f32 + (row * factor) as f32 + factor as f32 / 2.0;
+            let (solid_start, solid_end) = Self::solid_columns(mask_interior, y, x0, x1);
             for column in 0..mask_width {
-                let px = (x0 + column as u32) as f32 + 0.5;
-                mask[row * mask_width + column] =
-                    (shadow_shape.coverage(px, py) * 255.0).round() as u8;
+                let x = x0 + (column * factor) as u32;
+                mask[row * mask_width + column] = if x >= solid_start && x < solid_end {
+                    255
+                } else {
+                    let px = x0 as f32 + (column * factor) as f32 + factor as f32 / 2.0;
+                    (shadow_shape.coverage(px, py) * 255.0).round() as u8
+                };
             }
         }
         if blur_radius > 0.0 {
-            blur_alpha(&mut mask, mask_width, mask_height, blur_radius / 2.0);
+            blur_alpha(
+                &mut mask,
+                mask_width,
+                mask_height,
+                blur_radius / 2.0 / factor as f32,
+            );
         }
 
-        for row in 0..mask_height {
+        // The box that casts the shadow hides it completely, and for a large
+        // surface that occluded area is most of what this loop would walk. Its
+        // interior is skipped outright instead of being computed and multiplied
+        // away to nothing.
+        let occluded = self.solid_interior(&shape, &Clip::unbounded());
+        for row in 0..area_height {
             let y = y0 + row as u32;
             let py = y as f32 + 0.5;
-            for column in 0..mask_width {
+            let (hidden_start, hidden_end) = Self::solid_columns(occluded, y, x0, x1);
+            for column in 0..area_width {
                 let x = x0 + column as u32;
-                let alpha = mask[row * mask_width + column];
-                if alpha == 0 {
+                if x >= hidden_start && x < hidden_end {
+                    continue;
+                }
+                let alpha = sample_mask(&mask, mask_width, mask_height, factor, column, row);
+                if alpha <= 0.0 {
                     continue;
                 }
                 let px = x as f32 + 0.5;
                 // The shadow does not show through the box that casts it.
-                let occluded = shape.coverage(px, py);
-                let coverage = (alpha as f32 / 255.0) * (1.0 - occluded) * clip.coverage(px, py);
+                let occlusion = shape.coverage(px, py);
+                let coverage = alpha * (1.0 - occlusion) * clip.coverage(px, py);
                 self.blend(x, y, color, coverage);
             }
         }
@@ -730,46 +988,105 @@ impl Canvas {
             return;
         }
 
+        // A blur discards detail by definition, so computing a wide one at full
+        // resolution is work thrown away: at quarter scale the result is
+        // indistinguishable and there are sixteen times fewer pixels to sweep
+        // three box passes over. Narrow blurs stay at full resolution, where the
+        // difference would show.
+        let factor: usize = if filter.blur >= 24.0 {
+            4
+        } else if filter.blur >= 12.0 {
+            2
+        } else {
+            1
+        };
+        let small_width = region_width.div_ceil(factor);
+        let small_height = region_height.div_ceil(factor);
+
         // Copy the backdrop out, filter it, then blend it back through the
         // shape's coverage so the edges stay crisp.
-        let mut region = vec![0f32; region_width * region_height * 4];
-        for row in 0..region_height {
-            for column in 0..region_width {
-                let color = self.pixel(sx0 + column as u32, sy0 + row as u32);
-                let offset = (row * region_width + column) * 4;
-                // Premultiply so blurring cannot bleed colour from transparent
-                // pixels.
-                let alpha = color.alpha_f32();
-                region[offset] = color.r as f32 / 255.0 * alpha;
-                region[offset + 1] = color.g as f32 / 255.0 * alpha;
-                region[offset + 2] = color.b as f32 / 255.0 * alpha;
-                region[offset + 3] = alpha;
+        let mut region = vec![0f32; small_width * small_height * 4];
+        for row in 0..small_height {
+            for column in 0..small_width {
+                // The average of the block this pixel stands for, premultiplied
+                // so blurring cannot bleed colour from transparent pixels.
+                let mut sum = [0f32; 4];
+                let mut count = 0f32;
+                for dy in 0..factor {
+                    let sy = row * factor + dy;
+                    if sy >= region_height {
+                        break;
+                    }
+                    for dx in 0..factor {
+                        let sx = column * factor + dx;
+                        if sx >= region_width {
+                            break;
+                        }
+                        // `pixel_range` clamped the area to the canvas, so these
+                        // are in bounds and can be read straight out of the
+                        // buffer rather than through the bounds-checked
+                        // accessor — this is the innermost loop of the blur.
+                        let index = self.index(sx0 + sx as u32, sy0 + sy as u32);
+                        let texel = &self.pixels[index..index + 4];
+                        let alpha = texel[3] as f32 / 255.0;
+                        sum[0] += texel[0] as f32 / 255.0 * alpha;
+                        sum[1] += texel[1] as f32 / 255.0 * alpha;
+                        sum[2] += texel[2] as f32 / 255.0 * alpha;
+                        sum[3] += alpha;
+                        count += 1.0;
+                    }
+                }
+                let offset = (row * small_width + column) * 4;
+                if count > 0.0 {
+                    for (channel, total) in sum.iter().enumerate() {
+                        region[offset + channel] = total / count;
+                    }
+                }
             }
         }
 
         if filter.blur > 0.0 {
-            blur_rgba_f32(&mut region, region_width, region_height, filter.blur / 2.0);
+            blur_rgba_f32(
+                &mut region,
+                small_width,
+                small_height,
+                filter.blur / 2.0 / factor as f32,
+            );
         }
 
-        for row in 0..region_height {
-            let y = sy0 + row as u32;
+        // Only the shape gets filtered. The padding around it was sampled so the
+        // blur had something to read past the edge, but walking all of it here
+        // and throwing away every pixel whose coverage came out zero cost more
+        // than the blur itself did.
+        let Some((cx0, cy0, cx1, cy1)) = self.pixel_range(shape.bounding_rect().expand(1.0), clip)
+        else {
+            return;
+        };
+        let interior = self.solid_interior(&shape, clip);
+        for y in cy0..cy1 {
             let py = y as f32 + 0.5;
-            for column in 0..region_width {
-                let x = sx0 + column as u32;
+            let row = (y.saturating_sub(sy0) as usize).min(region_height - 1);
+            let (solid_start, solid_end) = Self::solid_columns(interior, y, cx0, cx1);
+            for x in cx0..cx1 {
                 let px = x as f32 + 0.5;
-                let coverage = shape.coverage(px, py) * clip.coverage(px, py);
+                let coverage = if x >= solid_start && x < solid_end {
+                    1.0
+                } else {
+                    shape.coverage(px, py) * clip.coverage(px, py)
+                };
                 if coverage <= 0.0 {
                     continue;
                 }
-                let offset = (row * region_width + column) * 4;
-                let alpha = region[offset + 3];
+                let column = (x.saturating_sub(sx0) as usize).min(region_width - 1);
+                let [pr, pg, pb, alpha] =
+                    sample_region(&region, small_width, small_height, factor, column, row);
                 if alpha <= 0.0 {
                     continue;
                 }
                 // Un-premultiply, then apply the colour adjustments.
-                let mut r = region[offset] / alpha;
-                let mut g = region[offset + 1] / alpha;
-                let mut b = region[offset + 2] / alpha;
+                let mut r = pr / alpha;
+                let mut g = pg / alpha;
+                let mut b = pb / alpha;
                 if filter.grayscale > 0.0 {
                     let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                     r += (luma - r) * filter.grayscale;
@@ -863,12 +1180,15 @@ pub fn blur_alpha(data: &mut [u8], width: usize, height: usize, sigma: f32) {
         return;
     }
     let mut buffer: Vec<f32> = data.iter().map(|v| *v as f32).collect();
+    // A Gaussian is approximated by three box passes; they share one scratch
+    // buffer rather than each allocating a copy of the whole region.
+    let mut scratch = vec![0.0f32; buffer.len()];
     for size in box_sizes_for_sigma(sigma) {
         let radius = size / 2;
         if radius == 0 {
             continue;
         }
-        box_blur_f32(&mut buffer, width, height, radius, 1);
+        box_blur_f32(&mut buffer, &mut scratch, width, height, radius, 1);
     }
     for (target, value) in data.iter_mut().zip(buffer) {
         *target = value.clamp(0.0, 255.0).round() as u8;
@@ -880,19 +1200,97 @@ pub fn blur_rgba_f32(data: &mut [f32], width: usize, height: usize, sigma: f32) 
     if sigma <= 0.0 || width == 0 || height == 0 {
         return;
     }
+    let mut scratch = vec![0.0f32; data.len()];
     for size in box_sizes_for_sigma(sigma) {
         let radius = size / 2;
         if radius == 0 {
             continue;
         }
-        box_blur_f32(data, width, height, radius, 4);
+        box_blur_f32(data, &mut scratch, width, height, radius, 4);
     }
 }
 
 /// One separable box blur pass over `channels`-interleaved data.
-fn box_blur_f32(data: &mut [f32], width: usize, height: usize, radius: usize, channels: usize) {
-    let mut scratch = data.to_vec();
+/// How much to shrink a blur by before computing it.
+///
+/// A blur discards detail, so a wide one does not need full resolution: the
+/// saving is quadratic in the factor and the difference is not visible. Narrow
+/// blurs are left exact, where it would be.
+fn blur_scale(radius: f32) -> usize {
+    if radius >= 24.0 {
+        4
+    } else if radius >= 12.0 {
+        2
+    } else {
+        1
+    }
+}
 
+/// Bilinear read of a single-channel mask held at `1/factor` scale.
+fn sample_mask(
+    mask: &[u8],
+    width: usize,
+    height: usize,
+    factor: usize,
+    column: usize,
+    row: usize,
+) -> f32 {
+    if factor == 1 {
+        return mask[row * width + column] as f32 / 255.0;
+    }
+    let fx = ((column as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let fy = ((row as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let x0 = (fx.floor() as usize).min(width - 1);
+    let y0 = (fy.floor() as usize).min(height - 1);
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+    let at = |x: usize, y: usize| mask[y * width + x] as f32;
+    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+    (top + (bottom - top) * ty) / 255.0
+}
+
+/// Reads a downsampled region at the full-resolution pixel `(column, row)`.
+///
+/// Bilinear, so a quarter-scale blur comes back as a smooth gradient rather than
+/// in visible four-pixel steps. At a `factor` of one the coordinates land exactly
+/// on a pixel and this is a plain lookup, which keeps unscaled blurs bit-exact.
+fn sample_region(
+    region: &[f32],
+    width: usize,
+    height: usize,
+    factor: usize,
+    column: usize,
+    row: usize,
+) -> [f32; 4] {
+    let fx = ((column as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let fy = ((row as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
+    let x0 = (fx.floor() as usize).min(width - 1);
+    let y0 = (fy.floor() as usize).min(height - 1);
+    let x1 = (x0 + 1).min(width - 1);
+    let y1 = (y0 + 1).min(height - 1);
+    let tx = fx - x0 as f32;
+    let ty = fy - y0 as f32;
+
+    let mut out = [0f32; 4];
+    for (channel, value) in out.iter_mut().enumerate() {
+        let at = |x: usize, y: usize| region[(y * width + x) * 4 + channel];
+        let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+        let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+        *value = top + (bottom - top) * ty;
+    }
+    out
+}
+
+fn box_blur_f32(
+    data: &mut [f32],
+    scratch: &mut [f32],
+    width: usize,
+    height: usize,
+    radius: usize,
+    channels: usize,
+) {
     // Horizontal pass.
     for row in 0..height {
         let row_start = row * width * channels;
@@ -916,24 +1314,33 @@ fn box_blur_f32(data: &mut [f32], width: usize, height: usize, radius: usize, ch
         }
     }
 
-    // Vertical pass.
-    for column in 0..width {
-        for channel in 0..channels {
-            let mut sum = 0.0f32;
-            let window = (radius * 2 + 1) as f32;
-            for offset in 0..=radius {
-                let row = offset.min(height - 1);
-                sum += scratch[(row * width + column) * channels + channel];
-            }
-            sum += scratch[column * channels + channel] * radius as f32;
-
-            for row in 0..height {
-                data[(row * width + column) * channels + channel] = sum / window;
-                let leaving = row.saturating_sub(radius);
-                let entering = (row + radius + 1).min(height - 1);
-                sum -= scratch[(leaving * width + column) * channels + channel];
-                sum += scratch[(entering * width + column) * channels + channel];
-            }
+    // Vertical pass, walked a row at a time rather than a column at a time.
+    //
+    // Sliding a window down one column touches a different cache line for every
+    // pixel it reads, and for a window-sized region that missed on essentially
+    // every access. Keeping one running sum per column instead means both reads
+    // and writes go straight along memory. The arithmetic per column is
+    // unchanged, and so is the result.
+    let stride = width * channels;
+    let window = (radius * 2 + 1) as f32;
+    let mut sums = vec![0.0f32; stride];
+    for offset in 0..=radius {
+        let row = offset.min(height - 1);
+        for (sum, value) in sums.iter_mut().zip(&scratch[row * stride..][..stride]) {
+            *sum += *value;
+        }
+    }
+    for (sum, value) in sums.iter_mut().zip(&scratch[..stride]) {
+        *sum += *value * radius as f32;
+    }
+    for row in 0..height {
+        let leaving = row.saturating_sub(radius) * stride;
+        let entering = (row + radius + 1).min(height - 1) * stride;
+        let out = row * stride;
+        for index in 0..stride {
+            data[out + index] = sums[index] / window;
+            sums[index] -= scratch[leaving + index];
+            sums[index] += scratch[entering + index];
         }
     }
 }

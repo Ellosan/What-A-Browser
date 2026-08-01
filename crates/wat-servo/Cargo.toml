@@ -1,0 +1,31 @@
+[package]
+name = "wat-servo"
+description = "What-A-Browser's interface on Servo's engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ellosan/what-a-browser"
+authors = ["What-A-Browser contributors"]
+
+# Outside the workspace on purpose: see the note at the top of src/lib.rs. The
+# paths are spelled out because a crate outside the workspace cannot inherit its
+# dependency table.
+[dependencies]
+wat-css = { path = "../wat-css" }
+wat-layout = { path = "../wat-layout" }
+wat-paint = { path = "../wat-paint" }
+wat-style = { path = "../wat-style" }
+wat-theme = { path = "../wat-theme" }
+wat-web = { path = "../wat-web" }
+
+servo = "0.4"
+dpi = "0.1"
+euclid = "0.22"
+url = "2"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+
+# servo-script pins p256 and p384 to =0.14.0-rc.14, which want
+# `primeorder ^0.14.0-rc.14`. Cargo prefers the released 0.14.0, where the
+# WnafSize bound those release candidates rely on is no longer satisfied, so the
+# pre-release is pinned back into place. Without this, Servo does not build.
+primeorder = "=0.14.0-rc.14"

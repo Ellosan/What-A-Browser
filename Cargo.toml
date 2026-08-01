@@ -1,5 +1,10 @@
 [workspace]
 resolver = "2"
+# The Servo backend is not a member: building it builds SpiderMonkey from source,
+# which is tens of minutes and many gigabytes, and `cargo build --workspace`
+# should not pay that. Build it explicitly:
+#   cargo build --manifest-path crates/wat-servo/Cargo.toml
+exclude = ["crates/wat-servo"]
 members = [
     "crates/wat-dom",
     "crates/wat-html",
@@ -13,6 +18,7 @@ members = [
     "crates/wat-net",
     "crates/wat-engine",
     "crates/wat-theme",
+    "crates/wat-web",
     "crates/wat-ui",
     "crates/wat-shell",
     "crates/wat-cli",
@@ -39,6 +45,7 @@ wat-paint = { path = "crates/wat-paint", version = "0.1.0" }
 wat-net = { path = "crates/wat-net", version = "0.1.0" }
 wat-engine = { path = "crates/wat-engine", version = "0.1.0" }
 wat-theme = { path = "crates/wat-theme", version = "0.1.0" }
+wat-web = { path = "crates/wat-web", version = "0.1.0" }
 wat-ui = { path = "crates/wat-ui", version = "0.1.0" }
 wat-shell = { path = "crates/wat-shell", version = "0.1.0" }
 

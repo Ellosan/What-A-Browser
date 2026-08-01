@@ -96,6 +96,14 @@ impl TabId {
     pub fn value(self) -> u64 {
         self.0
     }
+
+    /// Rebuilds an id from what [`TabId::value`] returned.
+    ///
+    /// The seam between the interface and an engine passes tab ids as plain
+    /// integers, because two engines will not share this type.
+    pub fn from_value(value: u64) -> Self {
+        TabId(value)
+    }
 }
 
 /// One tab: a page plus its history.

@@ -68,10 +68,32 @@ things:
 
 ## The engine seam
 
-`wat_engine::WebEngine` is the interface between the shell and whatever renders
-web content: navigate, resize, scroll, hit-test, produce a frame. `Page` is this
-repository's implementation. The shell holds `dyn WebEngine` and reaches past it
-for nothing, so an alternative engine only has to implement the same trait.
+There are two, at different levels.
+
+`wat_engine::WebEngine` describes **one document**: address, title, scroll,
+hit-testing, and `frame() -> DisplayList`. `Page` implements it. It is a useful
+seam inside this engine, but it cannot be the seam between the browser and *any*
+engine, because a display list is this rasterizer's vocabulary — an engine built
+on WebRender has no way to produce one.
+
+`wat_web::Engine` is the seam that does hold across engines. It describes a whole
+browsing session — tabs, navigation, input, viewport — and asks for painting in
+the one form any engine can manage:
+
+```rust
+fn paint(&self, canvas: &mut Canvas, area: Rect, corner_radius: f32, scale: f32);
+```
+
+The engine puts its pixels in a region of the target canvas and must not draw
+outside it, because the chrome is composited on top and the glass reads what is
+underneath. Two engines implement it: `wat_engine::WatEngine`, which replays a
+display list, and `wat_servo::ServoEngine`, which renders through WebRender into
+memory and blits the result. See [SERVO.md](SERVO.md).
+
+The other thing the seam settles is who owns the network. The shell used to hold
+a `Loader` and pass it into every navigation, which only worked because this
+engine's network layer is a small trait; an engine that brings its own stack
+cannot be driven that way. So the loader lives behind the seam now.
 
 ## The scripting seam
 
