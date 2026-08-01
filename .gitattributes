@@ -7,3 +7,9 @@
 
 # Screenshots are binary and must not be touched.
 *.png binary
+
+# Exceptions for the committed Gradle wrapper. `cmd.exe` wants CRLF in a batch
+# file; the Unix `gradlew` must keep LF, which the rule above already gives it,
+# or no shell will run it.
+*.bat text eol=crlf
+*.jar binary

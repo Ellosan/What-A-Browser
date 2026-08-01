@@ -6,6 +6,12 @@
 /*.png
 !docs/images/*.png
 
+# Release archives, if the packaging steps are rehearsed by hand
+/wat-*.tar.gz
+/wat-*.zip
+/wat-*.apk
+/wat-*.sha256
+
 # Android build output
 /android/.gradle/
 /android/build/

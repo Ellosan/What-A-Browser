@@ -57,10 +57,18 @@ cargo ndk "${ndk_args[@]}" --platform 24 -o "$jni_libs" \
 
 echo "==> assembling the APK"
 gradle_task=$([ "$profile" = release ] && echo assembleRelease || echo assembleDebug)
+# The wrapper is committed and pins the Gradle version, because the Android
+# plugin only works with a matching one: a Gradle picked up from the PATH may be
+# too new (9.x rejects what the plugin does) or too old. It is downgraded to a
+# warning rather than an error so the script still works without it.
 if [ -x "$android_dir/gradlew" ]; then
     gradle_cmd="$android_dir/gradlew"
-else
+elif command -v gradle >/dev/null; then
+    echo "warning: no ./android/gradlew, falling back to $(gradle --version | awk '/^Gradle/ {print $2}' | head -1) from PATH" >&2
     gradle_cmd="gradle"
+else
+    echo "no Gradle: ./android/gradlew is missing and none is on the PATH" >&2
+    exit 1
 fi
 (cd "$android_dir" && "$gradle_cmd" --no-daemon "$gradle_task")
 

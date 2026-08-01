@@ -56,9 +56,14 @@ jobs:
           - name: linux-aarch64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+          # GitHub has retired the Intel macOS runners, so this one is
+          # cross-compiled from an Apple Silicon runner. The macOS SDK carries
+          # both architectures, so it is an ordinary build — the only thing lost
+          # is the ability to run the result here.
           - name: macos-x86_64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
+            cross: true
           - name: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -89,6 +94,7 @@ jobs:
       # renderer is headless, so this runs on every runner including the ones
       # with no display.
       - name: Smoke test the binary
+        if: ${{ !matrix.cross }}
         shell: bash
         run: |
           binary="target/${{ matrix.target }}/release/wat"
@@ -98,6 +104,17 @@ jobs:
           "$binary" render about:version --offline -o page.png
           test -s smoke.png
           test -s page.png
+
+      # A cross-compiled binary cannot be run on the host, so check that it is
+      # actually for the architecture it claims. Shipping an arm64 binary in the
+      # x86_64 archive is exactly the mistake this catches.
+      - name: Check the cross-compiled binary
+        if: ${{ matrix.cross }}
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/wat"
+          file "$binary"
+          file "$binary" | grep -q 'x86_64'
 
       - name: Package
         id: package
@@ -112,7 +129,8 @@ jobs:
           staging="wat-$version-${{ matrix.name }}"
           mkdir -p "$staging"
           cp README.md LICENSE "$staging/"
-          cp -r themes "$staging/"
+          # The bundled presets live with the crate that owns them.
+          cp -r crates/wat-theme/themes "$staging/"
 
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/wat.exe" "$staging/"
@@ -164,10 +182,24 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
-      - name: Install the NDK
+
+      # The runner image usually ships an NDK already; using it saves a slow
+      # download. Installing one is the fallback, not the default, and the
+      # result is checked either way so a missing NDK fails here rather than
+      # inside cargo-ndk.
+      - name: Find an NDK
         run: |
-          sdkmanager --install "ndk;27.0.12077973" >/dev/null
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ ! -d "$ndk/toolchains" ]; then
+            sdkmanager --install "ndk;$NDK_VERSION"
+            ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          fi
+          test -d "$ndk/toolchains" || { echo "no usable NDK at $ndk" >&2; exit 1; }
+          echo "using $ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+        env:
+          NDK_VERSION: "27.2.12479018"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked

@@ -62,10 +62,23 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
-      - name: Install the NDK
+
+      # Prefer the NDK already on the runner image; install one only if there is
+      # none. Either way the result is checked, so a missing NDK fails here with
+      # a clear message instead of somewhere inside cargo-ndk.
+      - name: Find an NDK
         run: |
-          sdkmanager --install "ndk;27.0.12077973" >/dev/null
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          ndk="${ANDROID_NDK_LATEST_HOME:-}"
+          if [ ! -d "$ndk/toolchains" ]; then
+            sdkmanager --install "ndk;$NDK_VERSION"
+            ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          fi
+          test -d "$ndk/toolchains" || { echo "no usable NDK at $ndk" >&2; exit 1; }
+          echo "using $ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
+        env:
+          NDK_VERSION: "27.2.12479018"
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked

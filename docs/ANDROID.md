@@ -36,7 +36,9 @@ sans-serif family.
 
 ## Building it
 
-You need the Android SDK and NDK, `cargo-ndk`, and the Rust targets:
+You need the Android SDK and NDK, `cargo-ndk`, and the Rust targets. Gradle is
+not in that list: the wrapper in `android/` is committed, so the right version
+fetches itself.
 
 ```sh
 cargo install cargo-ndk
@@ -44,8 +46,11 @@ rustup target add aarch64-linux-android armv7-linux-androideabi \
     i686-linux-android x86_64-linux-android
 
 export ANDROID_HOME=$HOME/Android/Sdk
-export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
 ```
+
+Nothing needs a `local.properties`; `ANDROID_HOME` is enough for Gradle to find
+the SDK.
 
 Then:
 
@@ -63,8 +68,13 @@ adb logcat -s WAT
 ```
 
 `build.sh` is two steps you can also run by hand: `cargo ndk` cross-compiles
-`libwat_shell.so` into `android/app/src/main/jniLibs/<abi>/`, and Gradle packages
-that directory into an APK.
+`libwat_shell.so` into `android/app/src/main/jniLibs/<abi>/`, and
+`./android/gradlew assembleRelease` packages that directory into an APK.
+
+The Gradle version is pinned by the wrapper on purpose. The Android plugin only
+accepts a narrow range of them — Gradle 9 rejects what the version here does —
+so a build that picked Gradle up from the `PATH` would break whenever the
+machine's Gradle moved.
 
 ## Signing a release
 
