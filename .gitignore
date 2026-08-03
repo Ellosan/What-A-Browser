@@ -18,3 +18,6 @@
 /android/app/build/
 /android/app/src/main/jniLibs/
 /android/local.properties
+
+# The Chromium fork's checkout: tens of gigabytes, fetched not committed.
+/chromium/checkout/

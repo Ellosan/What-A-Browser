@@ -1,0 +1,50 @@
+# GN args for the fork's Android release build.
+#
+# Never compiled. Read as a starting point, not a working configuration.
+
+target_os = "android"
+target_cpu = "arm64"
+
+# An official build is what makes a shippable APK: full optimisation, no debug
+# assertions. It is much slower to link than a default release build.
+is_debug = false
+is_official_build = true
+
+# Chrome's official builds are profile-guided against a profile Google generates.
+# A fork has no such profile, and leaving this on makes the build demand one that
+# does not exist for our source.
+chrome_pgo_phase = 0
+
+# Enough symbols for a usable crash stack, not enough to double the binary.
+symbol_level = 1
+blink_symbol_level = 0
+
+# --- the reason this fork exists -------------------------------------------
+#
+# Opts Android into the extensions platform. Chrome for Android has no
+# extensions, and `enable_extensions` is hard-coded off for `is_android` in
+# extensions/buildflags/buildflags.gni, so this needs 0001-*.patch applied.
+#
+# Upstream's own Android extensions work sits behind
+# `enable_desktop_android_extensions`, which their comment calls
+# "very much in-development, non-stable, and likely to crash at any given
+# moment". Expect that to be true.
+wat_android_extensions = true
+
+# --- what a fork may not ship ----------------------------------------------
+#
+# Chrome's API keys belong to Google, not to a fork. Building without them
+# disables sync, safe browsing lookups and geolocation; register the fork's own
+# keys and set these if those are wanted.
+use_official_google_api_keys = false
+
+# Neither of these belongs in a browser like this one, and both are attack
+# surface and binary size.
+enable_remoting = false
+enable_nacl = false
+
+# Chrome's own reporting, which a fork has nowhere to send.
+enable_reporting = false
+
+# Smaller APK: one ABI per build rather than a fat one.
+android_channel = "stable"

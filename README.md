@@ -232,7 +232,15 @@ cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
-## Android
+## Android on a Chromium fork
+
+`chromium/` builds the Android browser from a patched Chromium instead of WAT's
+own engine — Chromium's engine and sandbox, WAT's look, and the extensions Chrome
+for Android does not have. It is pinned to a Chromium release, carries a small
+patch series, and is **unbuilt**: see [docs](chromium/README.md) for what that
+means and for the rebase duty a fork commits you to.
+
+## Android on WAT's own engine
 
 There is a real Android app in `android/`, and it is the same browser: no Java
 beyond a manifest, no WebView. `NativeActivity` loads `libwat_shell.so` and
