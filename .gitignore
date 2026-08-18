@@ -21,3 +21,9 @@
 
 # The Chromium fork's checkout: tens of gigabytes, fetched not committed.
 /chromium/checkout/
+
+# WebView app build output
+/android-webview/.gradle/
+/android-webview/build/
+/android-webview/app/build/
+/android-webview/local.properties

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No cleartext, anywhere, with no per-domain exceptions. A browser that will load
+  http:// is a browser whose pages can be rewritten by anyone on the same
+  network, and the address bar cannot tell you it happened.
+
+  This is stricter than Chrome, which downgrades gracefully. It is a deliberate
+  choice for a browser whose stated goal is being secure, and it will break sites
+  that are still http-only.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- System roots only. User-installed CAs are how corporate
+                 middleboxes and malware intercept HTTPS; a browser should not
+                 honour them silently. -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

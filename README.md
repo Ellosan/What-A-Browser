@@ -232,6 +232,14 @@ cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
+## Android on the system WebView
+
+`android-webview/` is the third option: Chromium's engine through Android's
+system WebView, WAT's interface around it, and a **76 KB** APK. Google patches
+the engine through Play, so it cannot fall behind the way a fork can. No
+extensions, and no engine control. See [docs/WEBVIEW.md](docs/WEBVIEW.md) for
+what is hardened and why.
+
 ## Android on a Chromium fork
 
 `chromium/` builds the Android browser from a patched Chromium instead of WAT's

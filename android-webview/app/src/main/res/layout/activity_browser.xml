@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Page underneath, glass on top: the same arrangement the desktop browser uses,
+  and the reason the bars are translucent rather than opaque.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/canvas"
+    android:fitsSystemWindows="true">
+
+    <WebView
+        android:id="@+id/web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="56dp"
+        android:layout_marginBottom="64dp" />
+
+    <LinearLayout
+        android:id="@+id/top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_gravity="top"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp">
+
+        <TextView
+            android:id="@+id/lock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="10dp"
+            android:text="@string/lock_secure"
+            android:textColor="@color/success"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/address"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:autofillHints=""
+            android:background="@null"
+            android:hint="@string/address_hint"
+            android:imeOptions="actionGo"
+            android:inputType="textUri"
+            android:maxLines="1"
+            android:paddingHorizontal="6dp"
+            android:selectAllOnFocus="true"
+            android:textColor="@color/text"
+            android:textColorHint="@color/text_muted"
+            android:textSize="15sp" />
+
+        <ProgressBar
+            android:id="@+id/progress"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_gravity="bottom"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp">
+
+        <Button
+            android:id="@+id/back"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/back"
+            android:text="@string/back_glyph"
+            android:textColor="@color/text"
+            android:textSize="20sp" />
+
+        <Button
+            android:id="@+id/forward"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/forward"
+            android:text="@string/forward_glyph"
+            android:textColor="@color/text"
+            android:textSize="20sp" />
+
+        <Button
+            android:id="@+id/reload"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/reload"
+            android:text="@string/reload_glyph"
+            android:textColor="@color/text"
+            android:textSize="20sp" />
+
+        <Button
+            android:id="@+id/home"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/home"
+            android:text="@string/home_glyph"
+            android:textColor="@color/text"
+            android:textSize="20sp" />
+    </LinearLayout>
+</FrameLayout>

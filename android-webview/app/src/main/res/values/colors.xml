@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The real palette lives in Glass.kt, generated from
+  crates/wat-theme/themes/liquid-glass.toml. These exist only because layout XML
+  cannot reference Kotlin, and they are the light scheme's values.
+-->
+<resources>
+    <color name="canvas">#FFEEF2F8</color>
+    <color name="text">#FF10141C</color>
+    <color name="text_muted">#8C10141C</color>
+    <color name="success">#FF1FA463</color>
+</resources>

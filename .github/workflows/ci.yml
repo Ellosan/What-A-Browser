@@ -104,6 +104,41 @@ jobs:
             cargo ndk -t "$target" --platform 24 check -p wat-shell --lib
           done
 
+  # No NDK and no Rust: this one is quick enough to run on every push, unlike the
+  # native Android build above.
+  webview:
+    name: WebView APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+
+      # The unit tests are the scheme policy, which is a security boundary.
+      - name: Test and build
+        run: ./android-webview/build.sh release
+
+      # An APK that declares more than it needs is the failure worth catching
+      # here: this browser asks for INTERNET and nothing else.
+      - name: Check what it asks for
+        run: |
+          aapt2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
+          apk=$(find android-webview/app/build/outputs/apk/release -name '*.apk' | head -1)
+          permissions=$("$aapt2" dump badging "$apk" | grep "^uses-permission" || true)
+          echo "$permissions"
+          if [ "$(echo "$permissions" | wc -l)" -ne 1 ] || \
+             ! echo "$permissions" | grep -q "android.permission.INTERNET"; then
+              echo "the WebView browser should ask for INTERNET and nothing else" >&2
+              exit 1
+          fi
+          # Cleartext must stay off; a browser that loads http:// silently is the
+          # thing this app is meant not to be.
+          "$aapt2" dump xmltree --file AndroidManifest.xml "$apk" \
+              | grep -q "usesCleartextTraffic(0x010104ec)=false"
+
   lint:
     name: Format and lints
     runs-on: ubuntu-latest

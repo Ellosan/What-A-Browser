@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WAT</string>
+    <string name="address_hint">Search or type an address</string>
+    <string name="lock_secure">🔒</string>
+
+    <string name="back">Back</string>
+    <string name="forward">Forward</string>
+    <string name="reload">Reload</string>
+    <string name="home">Home</string>
+    <string name="back_glyph">‹</string>
+    <string name="forward_glyph">›</string>
+    <string name="reload_glyph">↻</string>
+    <string name="home_glyph">⌂</string>
+
+    <string name="blocked_scheme">Blocked a %1$s: link</string>
+    <string name="no_handler">Nothing on this phone opens %1$s: links</string>
+
+    <string name="ssl_expired">Not loaded: that site\'s certificate has expired</string>
+    <string name="ssl_mismatch">Not loaded: that certificate is for a different site</string>
+    <string name="ssl_untrusted">Not loaded: that certificate is not trusted</string>
+    <string name="ssl_date">Not loaded: that certificate is not valid yet</string>
+    <string name="ssl_generic">Not loaded: the secure connection could not be verified</string>
+</resources>
