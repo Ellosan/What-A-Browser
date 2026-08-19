@@ -235,10 +235,15 @@ cargo clippy --workspace --all-targets
 ## Android on the system WebView
 
 `android-webview/` is the third option: Chromium's engine through Android's
-system WebView, WAT's interface around it, and a **76 KB** APK. Google patches
+system WebView, WAT's interface around it, and a **106 KB** APK. Google patches
 the engine through Play, so it cannot fall behind the way a fork can. No
-extensions, and no engine control. See [docs/WEBVIEW.md](docs/WEBVIEW.md) for
-what is hardened and why.
+extensions, and no engine control.
+
+It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
+find in page, sharing, desktop sites, fullscreen video and settings — with only
+three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
+cannot afford sixteen. See [docs/WEBVIEW.md](docs/WEBVIEW.md) for what is
+hardened, what is deliberately missing, and why.
 
 ## Android on a Chromium fork
 

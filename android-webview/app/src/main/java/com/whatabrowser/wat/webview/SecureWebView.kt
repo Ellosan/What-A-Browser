@@ -49,9 +49,13 @@ object SecureWebView {
         // exactly that for images and stylesheets.
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
-        // Popups that open without a gesture, driven by the page.
+        // Popups that open without a gesture, driven by the page. The pair
+        // matters: multiple windows are supported, so `target="_blank"` and a
+        // tapped `window.open` become tabs, but script cannot open one on its
+        // own — and `onCreateWindow` refuses anything without a user gesture as
+        // well, because this is the setting worth checking twice.
         settings.javaScriptCanOpenWindowsAutomatically = false
-        settings.setSupportMultipleWindows(false)
+        settings.setSupportMultipleWindows(true)
 
         // Location is a permission the browser has not asked for and does not
         // want; the WebView would otherwise prompt on the page's behalf.

@@ -9,6 +9,49 @@ limited web compatibility. `chromium/` forks Chromium — full compatibility and
 extensions, at the cost of a permanent rebase duty and a slow launch. This one
 takes Chromium's engine without owning it.
 
+## What it does
+
+An everyday browser, in about 2,000 lines of Kotlin:
+
+| | |
+| --- | --- |
+| **Tabs** | Up to 16, opened from links, `target="_blank"` and the switcher. A link opens next to the page it came from, not at the end of the strip |
+| **Address bar** | Search or address, with suggestions from bookmarks and history. Five search engines to choose from, all HTTPS |
+| **Bookmarks and history** | SQLite, one row per page, written off the main thread. History can be turned off entirely |
+| **Downloads** | Through the system download manager, with the file name sanitised first — see below |
+| **File uploads** | `<input type=file>`, through the document picker, which needs no storage permission |
+| **Find in page** | With a match counter |
+| **Share, copy, long-press menu** | Open in a new tab, copy, share or download a link |
+| **Desktop site** | Per tab, by user agent |
+| **Fullscreen video** | `onShowCustomView`, so the fullscreen button on video sites works |
+| **Page dialogs** | `alert`, `confirm`, `prompt` and "leave this page?", each naming the site that is asking |
+| **Settings** | Search engine, home page, desktop sites, history, and clearing cookies, site storage and history |
+
+### Tabs on a 4 GB phone
+
+A live `WebView` costs tens of megabytes of renderer state, so sixteen of them is
+how a browser gets killed in the background with everything in it. Only the three
+most recently used tabs keep a view; the rest are frozen to a saved state and
+restored — scroll position and back history included — when they come forward.
+`TabList` decides which to freeze, and a tab opened in the background costs
+nothing at all until it is looked at.
+
+### Downloads and the file name
+
+The name of a downloaded file is chosen by the server, in a header. A server that
+sends `Content-Disposition: attachment; filename="../../../shared_prefs/settings.xml"`
+is asking the browser to write outside the download directory, and Android's own
+`URLUtil.guessFileName` has had that bug more than once. `Downloads.kt` keeps only
+the last path segment, strips control characters and the NUL that truncates a path
+in every C library underneath, refuses names that are only dots, and there are
+tests for each of those with the hostile header written out.
+
+Files go to the app's own external files directory rather than the shared
+Downloads folder, because writing to the shared one needs
+`WRITE_EXTERNAL_STORAGE` on Android 9 and below — a permission this browser does
+not ask for and will not start asking for to save a PDF. They still appear in the
+system's Downloads list.
+
 ## Why the system WebView is more secure than a fork
 
 The instinct is that forking gives more control and therefore more safety. For a
@@ -71,7 +114,7 @@ effect is worth. The glass reads as glass without it.
 
 ## Why it launches quickly
 
-- **76 KB release APK**, against 18 MB for the native build. No shared library to
+- **106 KB release APK**, against 18 MB for the native build. No shared library to
   load, no Rust runtime to start.
 - **No Compose, no AppCompat.** Plain `Activity`, plain views, one dependency
   (`androidx.webkit`). Every library linked here is initialised before the first
@@ -101,11 +144,28 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## What is not built yet
 
-- **Tabs.** One WebView, one page. The interface has no tab strip because there
-  is nothing behind it yet.
-- **Downloads.** `setDownloadListener` is not wired, so a download link does
-  nothing.
-- **File uploads.** `onShowFileChooser` is not implemented, so `<input type=file>`
-  does nothing. Both of these are where a browser usually meets the filesystem,
-  and both need care given everything above.
-- **Find in page, history, bookmarks, settings.**
+- **Private browsing.** Android's WebView has one cookie and storage jar per
+  process, so a private tab that shared it would be private in name only. Doing
+  it honestly means a second process, and it is not built. "Clear browsing data"
+  in settings is what there is instead.
+- **Session restore across a cold start.** Tabs survive rotation and being killed
+  in the background, but closing the app forgets them. The back history is kept
+  for the tab in front only — every tab's history would cross the 1 MB limit on
+  saved state and crash the browser it was meant to protect.
+- **`blob:` and `data:` downloads.** These are generated inside the page and the
+  system download manager can only fetch over the network. An export button that
+  builds a file in JavaScript will not save.
+- **Reader mode, translation, autofill, sync, extensions.** Extensions are what
+  `chromium/` is for, and the reason that directory exists at all.
+
+## Testing
+
+35 JVM unit tests, all of the security-relevant logic among them: the scheme
+policy, download file names, tab order and eviction, the search templates and the
+desktop user agent. They run on every push, before the APK is built, and CI then
+checks the built APK asks for `INTERNET` and nothing else and still refuses
+cleartext.
+
+None of it has run on a phone — there is no device or emulator in the build
+environment, and no KVM to run one under. What is verified is the tests, the
+build, Android lint (0 errors) and what is inside the APK.

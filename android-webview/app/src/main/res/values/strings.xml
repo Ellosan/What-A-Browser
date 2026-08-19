@@ -3,15 +3,87 @@
     <string name="app_name">WAT</string>
     <string name="address_hint">Search or type an address</string>
     <string name="lock_secure">🔒</string>
+    <string name="one">1</string>
 
     <string name="back">Back</string>
     <string name="forward">Forward</string>
     <string name="reload">Reload</string>
     <string name="home">Home</string>
+    <string name="close">Close</string>
+    <string name="menu">Menu</string>
     <string name="back_glyph">‹</string>
     <string name="forward_glyph">›</string>
     <string name="reload_glyph">↻</string>
     <string name="home_glyph">⌂</string>
+    <string name="menu_glyph">⋮</string>
+    <string name="close_glyph">✕</string>
+    <string name="star_empty_glyph">☆</string>
+    <string name="star_full_glyph">★</string>
+
+    <!-- Tabs -->
+    <string name="tabs">Tabs</string>
+    <string name="new_tab">New tab</string>
+    <string name="no_tabs">No tabs open</string>
+    <string name="tab_limit">That is as many tabs as this browser keeps open</string>
+
+    <!-- Bookmarks and history -->
+    <string name="bookmarks">Bookmarks</string>
+    <string name="no_bookmarks">Nothing saved yet</string>
+    <string name="add_bookmark">Bookmark this page</string>
+    <string name="remove_bookmark">Remove bookmark</string>
+    <string name="bookmark_added">Bookmarked</string>
+    <string name="bookmark_removed">Bookmark removed</string>
+    <string name="bookmarked_label">★ %1$s</string>
+    <string name="history">History</string>
+    <string name="no_history">Nothing here yet</string>
+    <string name="clear_history">Clear history</string>
+
+    <!-- Find in page -->
+    <string name="find_in_page">Find in page</string>
+    <string name="find_hint">Find in page</string>
+    <string name="find_next">Next match</string>
+    <string name="find_previous">Previous match</string>
+    <string name="find_matches">%1$d/%2$d</string>
+    <string name="find_none">0/0</string>
+
+    <!-- Sharing and links -->
+    <string name="share">Share</string>
+    <string name="share_page">Share page</string>
+    <string name="open_in_new_tab">Open in a new tab</string>
+    <string name="copy_link">Copy link</string>
+    <string name="copied">Copied</string>
+    <string name="download_link">Download link</string>
+    <string name="nothing_to_share">Nothing to share yet</string>
+
+    <!-- Downloads -->
+    <string name="downloads">Downloads</string>
+    <string name="download_started">Downloading %1$s</string>
+    <string name="download_failed">That download could not be started</string>
+    <string name="download_unsupported">That file is made inside the page and cannot be saved</string>
+    <string name="download_no_viewer">Nothing on this phone shows downloads</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="search_engine">Search engine</string>
+    <string name="home_page">Home page</string>
+    <string name="home_page_rejected">A home page has to be a web address</string>
+    <string name="desktop_by_default">Ask for desktop sites</string>
+    <string name="desktop_site">Desktop site</string>
+    <string name="keep_history">Keep history</string>
+    <string name="clear_data">Clear browsing data</string>
+    <string name="clear_data_detail">Cookies, site storage and history</string>
+    <string name="clear_data_confirm">This signs you out of sites and empties this browser\'s history. It cannot be undone.</string>
+    <string name="clear">Clear</string>
+    <string name="cleared">Cleared</string>
+    <string name="reset">Reset</string>
+    <string name="unknown">unknown</string>
+    <string name="about_detail">WAT %1$s · rendering with WebView %2$s</string>
+
+    <!-- What a page is allowed to say -->
+    <string name="site_says">%1$s says</string>
+    <string name="leave_page">Leave</string>
+    <string name="stay_on_page">Stay</string>
+    <string name="leave_page_message">Leave this page? Anything you have typed may be lost.</string>
 
     <string name="blocked_scheme">Blocked a %1$s: link</string>
     <string name="no_handler">Nothing on this phone opens %1$s: links</string>

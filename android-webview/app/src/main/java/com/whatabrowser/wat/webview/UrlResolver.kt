@@ -86,6 +86,22 @@ object UrlResolver {
         return candidate.lowercase()
     }
 
+    /**
+     * The host, for showing which site something came from.
+     *
+     * Used where the full address would be noise or a trick: the title of a
+     * dialog a page put up, and the source line under a download. Falls back to
+     * the whole string rather than to nothing, since a label that goes blank on
+     * an odd URL is a label an odd URL can hide behind.
+     */
+    fun hostOf(url: String): String {
+        val afterScheme = url.substringAfter("://", url)
+        val authority = afterScheme.substringBefore('/').substringBefore('?').substringBefore('#')
+        // Credentials in front of the host are the oldest way to make one address
+        // look like another: `https://example.com@evil.test/`.
+        return authority.substringAfterLast('@').ifEmpty { url }
+    }
+
     private fun search(terms: String, template: String): String =
         template.replace("{}", URLEncoder.encode(terms, "UTF-8"))
 

@@ -24,6 +24,7 @@
 
 # WebView app build output
 /android-webview/.gradle/
+/android-webview/.kotlin/
 /android-webview/build/
 /android-webview/app/build/
 /android-webview/local.properties
