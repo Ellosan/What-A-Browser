@@ -95,11 +95,11 @@
     <string name="tor_connecting">Connecting through Tor…</string>
     <string name="tor_notice">Tor hides where you are connecting from. This is not the Tor Browser: it does not make you look like everyone else, so a site can still tell one visitor from another.</string>
     <string name="tor_failed_title">Not going through Tor</string>
-    <string name="tor_failed">Nothing answered on the Tor proxy at %1$s, or it is not Tor. This window needs Orbot running with its HTTP proxy switched on. Nothing has been loaded.</string>
+    <string name="tor_failed">Tor did not start: %1$s. Nothing has been loaded.</string>
+    <string name="tor_bootstrap">Building a circuit — %1$d%%</string>
+    <string name="tor_check_failed">check.torproject.org did not confirm this connection is Tor</string>
     <string name="tor_unsupported">This device\'s WebView cannot be pointed at a proxy, so the Tor window cannot be opened on it.</string>
-    <string name="tor_no_orbot">Orbot is not installed. It is the Tor app for Android, from the Guardian Project.</string>
     <string name="tor_try_again">Try again</string>
-    <string name="tor_start_orbot">Start Orbot</string>
     <string name="tor_verified">Tor confirmed by check.torproject.org</string>
 
     <!-- History strips -->

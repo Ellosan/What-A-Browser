@@ -126,7 +126,10 @@ jobs:
       - name: Check what it asks for
         run: |
           aapt2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
-          apk=$(find android-webview/app/build/outputs/apk/release -name '*.apk' | head -1)
+          # The universal APK, which carries every architecture: whatever is
+          # checked here is true of the per-architecture ones as well.
+          apk=$(find android-webview/app/build/outputs/apk/release -name '*universal*.apk' | head -1)
+          test -n "$apk" || { echo "no universal APK to check" >&2; exit 1; }
           permissions=$("$aapt2" dump badging "$apk" | grep "^uses-permission" || true)
           echo "$permissions"
           if [ "$(echo "$permissions" | wc -l)" -ne 1 ] || \
@@ -148,6 +151,17 @@ jobs:
           for process in ':cat' ':lion'; do
               echo "$manifest" | grep -q "process(0x01010011)=\"$process\"" || {
                   echo "the private window for $process must have a process of its own" >&2
+                  exit 1
+              }
+          done
+
+          # Tor is carried in the APK rather than asked of another app, so a
+          # build that lost the library would offer a Tor window that cannot
+          # work. Every architecture, since a missing one fails only on the
+          # phones nobody testing it happens to hold.
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+              unzip -l "$apk" | grep -q "lib/$abi/libtor.so" || {
+                  echo "no tor library for $abi" >&2
                   exit 1
               }
           done

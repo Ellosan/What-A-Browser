@@ -66,6 +66,14 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     private var backdrop: Backdrop? = null
 
+    /**
+     * The accelerometer, which moves the highlight on the glass.
+     *
+     * Registered only while the window is in front. A sensor left listening is a
+     * battery complaint nobody can trace back to a highlight.
+     */
+    private var tilt: Tilt? = null
+
     private lateinit var address: AutoCompleteTextView
     private lateinit var lock: TextView
     private lateinit var progress: ProgressBar
@@ -160,74 +168,6 @@ open class BrowserActivity : Activity(), Tabs.Listener {
             .show()
     }
 
-    // --- Tor -----------------------------------------------------------------
-
-    /**
-     * Puts the window behind Tor before it is allowed to load anything.
-     *
-     * The order matters and is the whole point: route first, then check through
-     * the routed stack, and only then open a page. If any step fails the window
-     * closes rather than falling back to the ordinary network — which is what
-     * "fails closed" has to mean for this to be worth offering at all.
-     */
-    private fun openThroughTor(firstPage: String?) {
-        if (!TorGate.isSupported()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.tor_failed_title)
-                .setMessage(R.string.tor_unsupported)
-                .setCancelable(false)
-                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
-                .show()
-            return
-        }
-
-        val waiting = AlertDialog.Builder(this)
-            .setTitle(R.string.tor_connecting)
-            .setMessage(R.string.tor_notice)
-            .setCancelable(false)
-            .create()
-        waiting.show()
-
-        TorGate.route {
-            // A WebView of its own, never attached to the window: the check must
-            // go through the same proxied stack the browsing will use, and it
-            // must not leave a page behind in a tab.
-            val probe = WebView(this)
-            SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
-            TorGate.verify(probe) { throughTor ->
-                probe.destroy()
-                waiting.dismiss()
-                if (throughTor) {
-                    Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
-                    firstPage?.let(tabs::open)
-                } else {
-                    showTorFailure(firstPage)
-                }
-            }
-        }
-    }
-
-    private fun showTorFailure(firstPage: String?) {
-        val detail = if (TorGate.orbotInstalled(this)) {
-            getString(R.string.tor_failed, TorGate.PROXY)
-        } else {
-            getString(R.string.tor_no_orbot) + "\n\n" + getString(R.string.tor_failed, TorGate.PROXY)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.tor_failed_title)
-            .setMessage(detail)
-            .setCancelable(false)
-            .setPositiveButton(R.string.tor_try_again) { _, _ -> openThroughTor(firstPage) }
-            .setNeutralButton(R.string.tor_start_orbot) { _, _ ->
-                TorGate.startOrbot(this)
-                // Orbot takes a moment to build a circuit, so the reader comes
-                // back and taps try again rather than this guessing when.
-                showTorFailure(firstPage)
-            }
-            .setNegativeButton(R.string.close_private) { _, _ -> finish() }
-            .show()
-    }
-
     private fun wireChrome() {
         val back = findViewById<View>(R.id.back)
         val forward = findViewById<View>(R.id.forward)
@@ -275,10 +215,17 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         findViewById<View>(R.id.find_previous).setOnClickListener { tabs.findNext(false) }
         findViewById<View>(R.id.find_close).setOnClickListener { hideFind() }
 
-        backdrop = Backdrop(
-            findViewById(R.id.pages),
-            listOf(findViewById(R.id.top_bar), findViewById(R.id.bottom_bar), findBar),
+        val bars = listOf<GlassBar>(
+            findViewById(R.id.top_bar),
+            findViewById(R.id.bottom_bar),
+            findBar,
         )
+        backdrop = Backdrop(findViewById(R.id.pages), bars)
+        tilt = Tilt(this) { x, _ ->
+            // Leaning right moves the light left, the way a highlight on a real
+            // surface does.
+            for (bar in bars) bar.light = -x
+        }
     }
 
     /**
@@ -348,22 +295,28 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     override fun onPause() {
         super.onPause()
         tabs.onPause()
+        tilt?.stop()
     }
 
     override fun onResume() {
         super.onResume()
         tabs.onResume()
+        tilt?.start()
+        backdrop?.refreshSoon()
     }
 
     override fun onDestroy() {
         // A WebView outlives its activity if it is left attached, and takes the
         // whole view tree with it.
         backdrop?.stop()
+        tilt?.stop()
         tabs.destroy()
         val closing = isFinishing
         super.onDestroy()
 
         if (closing && privacy.isPrivate) {
+            // Tor goes with the window it was started for.
+            if (privacy.usesTor) TorGate.stop()
             PrivateStorage.clearSession(privacy)
             // The process goes with the window. Its data directory is deleted
             // when a private window next starts — deleting it now, with a
@@ -533,6 +486,81 @@ open class BrowserActivity : Activity(), Tabs.Listener {
             }
             .show()
         return true
+    }
+
+    // --- Tor -----------------------------------------------------------------
+
+    /**
+     * Puts the window behind Tor before it is allowed to load anything.
+     *
+     * The order matters and is the whole point: start tor, route through it,
+     * check through the routed stack, and only then open a page. If any step
+     * fails the window closes rather than falling back to the ordinary network —
+     * which is what "fails closed" has to mean for this to be worth offering.
+     */
+    private fun openThroughTor(firstPage: String?) {
+        if (!TorGate.isSupported()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.tor_failed_title)
+                .setMessage(R.string.tor_unsupported)
+                .setCancelable(false)
+                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
+                .show()
+            return
+        }
+
+        val waiting = AlertDialog.Builder(this)
+            .setTitle(R.string.tor_connecting)
+            .setMessage(getString(R.string.tor_bootstrap, 0) + "\n\n" + getString(R.string.tor_notice))
+            .setCancelable(false)
+            .create()
+        waiting.show()
+
+        TorGate.start(this) { state ->
+            when (state) {
+                is TorEngine.State.Starting -> waiting.setMessage(
+                    getString(R.string.tor_bootstrap, state.percent) + "\n\n" +
+                        getString(R.string.tor_notice),
+                )
+
+                is TorEngine.State.Ready -> TorGate.route(state.proxy) {
+                    // A WebView of its own, never attached to the window: the
+                    // check must go through the same proxied stack the browsing
+                    // will use, and it must not leave a page behind in a tab.
+                    val probe = WebView(this)
+                    SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
+                    TorGate.verify(probe) { throughTor ->
+                        probe.destroy()
+                        if (throughTor) {
+                            waiting.dismiss()
+                            Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
+                            firstPage?.let(tabs::open)
+                        } else {
+                            waiting.dismiss()
+                            showTorFailure(firstPage, getString(R.string.tor_check_failed))
+                        }
+                    }
+                }
+
+                is TorEngine.State.Failed -> {
+                    waiting.dismiss()
+                    showTorFailure(firstPage, state.reason)
+                }
+            }
+        }
+    }
+
+    private fun showTorFailure(firstPage: String?, reason: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.tor_failed_title)
+            .setMessage(getString(R.string.tor_failed, reason))
+            .setCancelable(false)
+            .setPositiveButton(R.string.tor_try_again) { _, _ ->
+                TorGate.stop()
+                openThroughTor(firstPage)
+            }
+            .setNegativeButton(R.string.close_private) { _, _ -> finish() }
+            .show()
     }
 
     // --- the panels ---------------------------------------------------------

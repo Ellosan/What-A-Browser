@@ -26,7 +26,7 @@ An everyday browser, in about 2,000 lines of Kotlin:
 | **Fullscreen video** | `onShowCustomView`, so the fullscreen button on video sites works |
 | **Page dialogs** | `alert`, `confirm`, `prompt` and "leave this page?", each naming the site that is asking |
 | **Settings** | Search engine, home page, desktop sites, history, and clearing cookies, site storage and history |
-| **Private windows** | Hiding cat, and hiding lion with Tor — a process each, see below |
+| **Private windows** | Hiding cat, and hiding lion with Tor bundled in the app — a process each, see below |
 | **History on the back button** | Held rather than tapped: the pages behind or ahead, as a list |
 | **A menu you arrange** | Which items appear and in what order |
 
@@ -64,12 +64,28 @@ than opening a window that says "private" over the ordinary cookies.
 
 ### What hiding lion is, and what it is not
 
-It routes through **Orbot's HTTP proxy** on `127.0.0.1:8118`. `ProxyController`
-speaks HTTP proxies only, so Orbot's SOCKS port cannot be used, and Orbot has to
-be running with its HTTP proxy switched on.
+**Tor is in the app.** Until 0.1.3 this needed Orbot installed, which is a fair
+thing to ask of someone who already knows what Orbot is and no thing at all to
+ask of everyone else. Desktop Brave does not ask; it carries Tor. So does this:
+`libtor.so` — the real tor, from the kmp-tor project's build of the tor source —
+ships in the APK and is loaded into the lion window's process. There is nothing
+else to install.
+
+It is loaded as a library rather than executed as a binary, which side-steps
+Android's ban on executing files outside an app's native library directory.
+
+`ProxyController` — the only way to point a WebView at a proxy — speaks HTTP
+proxies and nothing else, while tor speaks SOCKS5. `TorBridge` is the fifty lines
+that join them: it accepts `CONNECT host:port` on loopback, opens a SOCKS5 tunnel
+through tor, and copies bytes. Two properties matter, and both are tested. It
+**only tunnels** — anything that is not a CONNECT is refused, so it cannot be
+talked into fetching a URL for anyone. And it **never resolves a name**: the host
+goes to tor as a name, so the lookup happens inside the circuit. Resolving here
+would put the traffic inside Tor and the DNS queries outside it, naming every
+site visited.
 
 It **fails closed**, deliberately, in two places. The proxy override carries no
-direct fallback, so if Orbot stops, pages fail rather than quietly going out over
+direct fallback, so if tor stops, pages fail rather than quietly going out over
 the ordinary network. And the window loads nothing at all until
 `check.torproject.org` has confirmed — through that same proxied WebView, not
 through the app's own HTTP client, which would answer for the wrong connection —
@@ -82,6 +98,13 @@ identical — fonts, screen size, timing, canvas — and none of that is possibl
 a system WebView. This hides *where you are connecting from*, not *who is
 connecting*: a site can still tell one visitor from another. The window says so,
 once, before the first page.
+
+**What it costs.** Tor is 8–9 MB of native code per architecture, and it is the
+whole reason this APK went from 121 KB to 7.9 MB. The build splits per
+architecture so nobody downloads four copies, and the library is compressed in
+the APK because this is sideloaded rather than delivered by a store. Cold start
+is untouched: none of it is loaded, or even class-loaded, unless a Tor window is
+opened, and that happens in a different process from the ordinary browser.
 
 ### Downloads and the file name
 
@@ -177,16 +200,53 @@ lifted into an Android view if it were; what is copied is the *look* — which
 parts are bright, where the light goes, how the corners turn — and the parts
 Android cannot do at all are named below rather than glossed over.
 
-What is still missing against the real thing: the backdrop refreshes when the
-page settles rather than every frame, so during a scroll the glass is showing a
-slightly stale blur; there is no edge lensing, where the rim bends and magnifies
-what is behind it; and specular highlights do not move with the phone, because
-nothing here reads the gyroscope. The colours themselves are not guesswork —
+0.1.3 adds the three things 0.1.2's version was missing, which were the three
+that matter most:
+
+- **The edge bends.** A real pane is thick and its edges are curved, so the last
+  few millimetres show what is behind them squeezed and pulled inward. `Lens`
+  resamples the captured backdrop with a squared falloff towards each edge. This
+  is the strongest single cue that a surface is glass; a blur alone reads as
+  frosted plastic.
+- **The light moves.** `Tilt` reads the accelerometer — gravity's direction in
+  the phone's frame *is* the tilt — and slides a specular band across the bar as
+  the phone turns. Low-pass filtered, because following an accelerometer exactly
+  makes the highlight shake, and stopped in `onPause`, because a sensor left
+  registered is a battery complaint nobody can trace back to a highlight. No
+  permission is involved: the motion sensors that need one are the step counter
+  and the heart rate monitor.
+- **It keeps up, and it answers.** Captures are now throttled rather than merely
+  deferred, so the backdrop refreshes about eight times a second *during* a
+  scroll and once more when it stops, and each new one cross-fades in rather than
+  popping. A touch brightens the glass where the finger landed and settles back
+  over 450 ms — the event is observed, never consumed, so the buttons underneath
+  behave exactly as they did.
+
+What is still missing: the backdrop is a frame or two behind during a fast fling,
+and the refraction is a resample rather than true per-pixel optics, so it bends
+what is behind the edge without magnifying it. The colours are not guesswork —
 `Glass.kt` is generated from the same `liquid-glass.toml` the Rust browser reads.
+
+
+### The icon
+
+Drawn, not drawn on. `cargo run --release --example app_icon -p wat-paint` renders
+every launcher icon with the browser's own rasterizer, from the same palette as
+the interface: a gradient tile with the sheen and rim the toolbars have, and a W
+built from four rotated rounded bars rather than from a font — so the icon does
+not depend on which fonts the machine building it happens to have.
+
+It produces the legacy icon with a margin (the old ones filled every pixel of
+their square, which is what Android's lint had been complaining about), a round
+variant, and the three layers of an adaptive icon: a full-bleed background, the
+mark inside the 66dp safe zone, and a monochrome silhouette for Android 13's
+themed icons. Both Android apps in this repository use them.
 
 ## Why it launches quickly
 
-- **121 KB release APK**, against 18 MB for the native build. No shared library to
+- **7.9 MB release APK** per architecture, 8–9 MB of which is the bundled tor.
+  Without it the app is still the same 121 KB it was in 0.1.2 — nothing else grew
+  — and none of tor is loaded unless a Tor window is opened. No shared library to
   load, no Rust runtime to start.
 - **No Compose, no AppCompat.** Plain `Activity`, plain views, one dependency
   (`androidx.webkit`). Every library linked here is initialised before the first
@@ -228,14 +288,17 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## Testing
 
-64 JVM unit tests, all of the security-relevant logic among them: the scheme
+87 JVM unit tests, all of the security-relevant logic among them: the scheme
 policy, download file names, tab order and eviction, the search templates, the
-desktop user agent, the Tor check's answer, the menu's stored layout and the blur
-kernel's bounds. They run on every push, before the APK is built, and CI then
+desktop user agent, the Tor check's answer, the SOCKS5 and HTTP CONNECT wire
+formats the Tor bridge speaks, the menu's stored layout, and the bounds of the
+blur and the lens. They run on every push, before the APK is built, and CI then
 checks the built APK asks for `INTERNET` and nothing else, still refuses
-cleartext, and still gives each private window a process of its own — the last
-one because a private window that quietly started sharing the ordinary cookie jar
-would look and behave exactly the same.
+cleartext, still gives each private window a process of its own, and still
+carries a tor library for every architecture. The last two because both
+regressions are invisible from the outside: a private window sharing the ordinary
+cookie jar looks identical, and a missing tor library fails only on the phones
+nobody testing it happens to hold.
 
 None of it has run on a phone — there is no device or emulator in the build
 environment, and no KVM to run one under. What is verified is the tests, the

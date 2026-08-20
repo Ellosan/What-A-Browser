@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The adaptive icon: the launcher masks these two layers into whatever shape the
+  device uses, so the mark stays inside the safe zone and the gradient runs to the
+  edges. The monochrome layer is the silhouette Android 13 tints for themed icons.
+
+  All three are drawn by the app_icon example in wat-paint, with the browser's own
+  rasterizer and the Liquid Glass palette. See docs/WEBVIEW.md.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

@@ -235,7 +235,7 @@ cargo clippy --workspace --all-targets
 ## Android on the system WebView
 
 `android-webview/` is the third option: Chromium's engine through Android's
-system WebView, WAT's interface around it, and a **106 KB** APK. Google patches
+system WebView and WAT's interface around it. Google patches
 the engine through Play, so it cannot fall behind the way a fork can. No
 extensions, and no engine control.
 
@@ -245,15 +245,19 @@ three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
 cannot afford sixteen.
 
 Private browsing comes in two: **hiding cat**, which writes nothing down, and
-**hiding lion**, which is hiding cat with every request through Tor and which
-refuses to open until `check.torproject.org` has confirmed it. Each runs in a
-process of its own, because Android's WebView keeps one cookie jar per process
-and that is the only thing that makes a private window actually separate. The
-Tor window is not the Tor Browser and says so before the first page.
+**hiding lion**, which is hiding cat with every request through Tor. Tor is
+carried in the app the way desktop Brave carries it — nothing else to install —
+and the window refuses to open until `check.torproject.org` has confirmed, through
+that same proxied WebView, that Tor is what it sees. Each runs in a process of its
+own, because Android's WebView keeps one cookie jar per process and that is the
+only thing that makes a private window actually separate. The Tor window is not
+the Tor Browser and says so before the first page.
 
-The glass is real glass as of 0.1.2: the strip of page behind each bar is
-captured at an eighth scale, blurred, and drawn as the bar's backdrop, under a
-sheen, a lit lower edge and a rim that fades around the sides. See
+The glass is real glass: the strip of page behind each bar is captured at an
+eighth scale, blurred, bent inward at the edges the way a thick pane refracts,
+and drawn as the bar's backdrop — with a specular highlight that slides as the
+phone tilts, and a brightening where a finger lands. The launcher icon is drawn
+by `wat-paint`, the same rasterizer that draws the browser. See
 [docs/WEBVIEW.md](docs/WEBVIEW.md) for what is hardened, what Android cannot do,
 and why.
 

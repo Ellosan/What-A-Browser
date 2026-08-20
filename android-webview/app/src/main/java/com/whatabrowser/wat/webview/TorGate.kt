@@ -1,7 +1,6 @@
 package com.whatabrowser.wat.webview
 
 import android.content.Context
-import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
@@ -14,10 +13,10 @@ import java.util.concurrent.Executor
 /**
  * Routing a window through Tor, and refusing to open it if that has not worked.
  *
- * **What this is.** Every request from the lion window goes through Orbot's HTTP
- * proxy, so the sites visited see a Tor exit node rather than the phone's
- * address, and the network between the phone and Tor sees only a connection to
- * Tor.
+ * **What this is.** Tor runs inside the app — see [TorEngine] — and every request
+ * from the lion window goes through it, so the sites visited see a Tor exit node
+ * rather than the phone's address, and the network between the phone and Tor sees
+ * only a connection to Tor. Nothing else needs installing.
  *
  * **What this is not.** It is not the Tor Browser. Tor Browser's real work is
  * making every user look identical — fonts, screen size, timing, canvas, the lot
@@ -26,43 +25,41 @@ import java.util.concurrent.Executor
  * connecting*. The gate says so, once, before the first page.
  *
  * **Why it fails closed.** The proxy override carries no direct fallback, so if
- * Orbot stops, requests fail rather than quietly going out over the ordinary
+ * tor stops, requests fail rather than quietly going out over the ordinary
  * network. And the window does not open at all until `check.torproject.org` has
  * confirmed, through this same proxied stack, that Tor is what it sees.
- *
- * SOCKS is not an option: `ProxyController` speaks HTTP proxies only, which is
- * why this needs Orbot's HTTP port rather than its SOCKS one.
  */
 object TorGate {
 
-    const val ORBOT_PACKAGE = "org.torproject.android"
-
-    /** Orbot's HTTP proxy. Its SOCKS port cannot be used by a WebView. */
-    const val PROXY = "127.0.0.1:8118"
-
     private const val CHECK_URL = "https://check.torproject.org/api/ip"
 
-    private const val CHECK_TIMEOUT_MS = 45_000L
+    private const val CHECK_TIMEOUT_MS = 60_000L
 
     private val direct = Executor { it.run() }
 
     /** Whether this device's WebView can be pointed at a proxy at all. */
     fun isSupported(): Boolean = WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)
 
+    /** Starts tor and the local bridge in front of it. */
+    fun start(context: Context, onState: (TorEngine.State) -> Unit) =
+        TorEngine.start(context, onState)
+
+    fun stop() = TorEngine.stop()
+
     /**
-     * Sends everything in this process through the proxy.
+     * Sends everything in this process through [proxy].
      *
      * Process-wide, which is the second reason a lion window is a process of its
      * own: the ordinary window must not start using Tor because a private one was
      * opened, and it must not stop using it because the private one closed.
      */
-    fun route(onApplied: () -> Unit) {
+    fun route(proxy: String, onApplied: () -> Unit) {
         if (!isSupported()) {
             onApplied()
             return
         }
         val config = ProxyConfig.Builder()
-            .addProxyRule(PROXY)
+            .addProxyRule(proxy)
             // Deliberately no `addDirect()`: with no fallback, a proxy that is
             // not there means the page fails to load rather than loading over
             // the ordinary network.
@@ -76,24 +73,6 @@ object TorGate {
             return
         }
         ProxyController.getInstance().clearProxyOverride(direct, onCleared)
-    }
-
-    fun orbotInstalled(context: Context): Boolean = try {
-        context.packageManager.getPackageInfo(ORBOT_PACKAGE, 0)
-        true
-    } catch (_: Exception) {
-        false
-    }
-
-    /** Asks Orbot to start. It shows its own interface; there is no silent start. */
-    fun startOrbot(context: Context): Boolean = try {
-        val intent = context.packageManager.getLaunchIntentForPackage(ORBOT_PACKAGE)
-            ?: return false
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        true
-    } catch (_: Exception) {
-        false
     }
 
     /**

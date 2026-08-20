@@ -13,8 +13,8 @@ android {
         // this in step with the other Android app.
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.2"
+        versionCode = 3
+        versionName = "0.1.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -49,6 +49,29 @@ android {
         buildConfig = true
     }
 
+    // Tor is a 8-9 MB native library per architecture, and nobody should
+    // download four of them to use one. Each device gets its own APK; the
+    // universal one exists for the checks in CI and for anyone who would rather
+    // have a single file.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Compresses the tor library in the APK. Uncompressed is the modern
+            // default because it saves disk after install, but this app is
+            // sideloaded rather than delivered by a store, and halving what has
+            // to be downloaded is worth more here than the copy on disk.
+            useLegacyPackaging = true
+        }
+    }
+
     lint {
         abortOnError = false
     }
@@ -61,5 +84,7 @@ dependencies {
     // Backports the modern WebView settings — Safe Browsing in particular — to
     // devices whose framework predates them.
     implementation("androidx.webkit:webkit:1.11.0")
+    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
+    implementation("io.matthewnelson.kmp-tor:resource-noexec-tor:409.5.0")
     testImplementation("junit:junit:4.13.2")
 }
