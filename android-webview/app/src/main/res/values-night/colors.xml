@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="canvas">#FF0B0E14</color>
+    <color name="text">#FFF2F5FA</color>
+    <color name="text_muted">#8CF2F5FA</color>
+    <color name="success">#FF4CD07D</color>
+</resources>

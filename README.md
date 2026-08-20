@@ -232,7 +232,40 @@ cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
-## Android
+## Android on the system WebView
+
+`android-webview/` is the third option: Chromium's engine through Android's
+system WebView, WAT's interface around it, and a **106 KB** APK. Google patches
+the engine through Play, so it cannot fall behind the way a fork can. No
+extensions, and no engine control.
+
+It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
+find in page, sharing, desktop sites, fullscreen video and settings — with only
+three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
+cannot afford sixteen.
+
+Private browsing comes in two: **hiding cat**, which writes nothing down, and
+**hiding lion**, which is hiding cat with every request through Tor and which
+refuses to open until `check.torproject.org` has confirmed it. Each runs in a
+process of its own, because Android's WebView keeps one cookie jar per process
+and that is the only thing that makes a private window actually separate. The
+Tor window is not the Tor Browser and says so before the first page.
+
+The glass is real glass as of 0.1.2: the strip of page behind each bar is
+captured at an eighth scale, blurred, and drawn as the bar's backdrop, under a
+sheen, a lit lower edge and a rim that fades around the sides. See
+[docs/WEBVIEW.md](docs/WEBVIEW.md) for what is hardened, what Android cannot do,
+and why.
+
+## Android on a Chromium fork
+
+`chromium/` builds the Android browser from a patched Chromium instead of WAT's
+own engine — Chromium's engine and sandbox, WAT's look, and the extensions Chrome
+for Android does not have. It is pinned to a Chromium release, carries a small
+patch series, and is **unbuilt**: see [docs](chromium/README.md) for what that
+means and for the rebase duty a fork commits you to.
+
+## Android on WAT's own engine
 
 There is a real Android app in `android/`, and it is the same browser: no Java
 beyond a manifest, no WebView. `NativeActivity` loads `libwat_shell.so` and

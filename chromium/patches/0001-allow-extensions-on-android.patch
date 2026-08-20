@@ -1,0 +1,71 @@
+From: What-A-Browser
+Subject: [PATCH 1/1] Allow the extensions platform on Android
+
+Chrome for Android has never shipped extensions. `enable_extensions` is off for
+`is_android` unconditionally in extensions/buildflags/buildflags.gni, so no GN
+argument can opt into it; the condition itself has to change.
+
+The fork's own arguments go in build/config/wat.gni rather than into one of
+Chromium's .gni files, so the change to Chromium proper is two lines: an import
+and the condition. That is deliberate. Every line a fork touches is a conflict
+waiting for the next release, and this patch has to survive a rebase every week.
+
+GN forbids one argument in a declare_args() block from depending on another in
+the same block, which is why `wat_android_extensions` cannot simply be declared
+alongside `enable_extensions` — it arrives through the import instead.
+
+Written against 151.0.7922.71. Never compiled: see chromium/README.md.
+---
+ build/config/wat.gni                | 25 ++++++++++++++++++++++++++
+ extensions/buildflags/buildflags.gni |  5 ++++-
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+ create mode 100644 build/config/wat.gni
+
+diff --git a/build/config/wat.gni b/build/config/wat.gni
+new file mode 100644
+--- /dev/null
++++ b/build/config/wat.gni
+@@ -0,0 +1,25 @@
++# Copyright 2026 The What-A-Browser Authors
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++# Build arguments belonging to the What-A-Browser fork.
++#
++# These live in a file of their own so the fork's arguments never have to be
++# threaded into Chromium's own .gni files. That keeps the rebase surface down to
++# the single line that imports this, which is the whole point: every line a fork
++# touches is a merge conflict waiting for the next release.
++
++declare_args() {
++  # Compiles the extensions platform into the Android build.
++  #
++  # Chrome for Android has never shipped extensions, and
++  # extensions/buildflags/buildflags.gni switches `enable_extensions` off for
++  # `is_android` unconditionally. This opts back in.
++  #
++  # Upstream's own Android extensions work sits behind
++  # `enable_desktop_android_extensions`, which their comment calls
++  # "very much in-development, non-stable, and likely to crash at any given
++  # moment" (crbug.com/356905053). This rides the same code paths, so expect
++  # exactly that.
++  wat_android_extensions = false
++}
+diff --git a/extensions/buildflags/buildflags.gni b/extensions/buildflags/buildflags.gni
+--- a/extensions/buildflags/buildflags.gni
++++ b/extensions/buildflags/buildflags.gni
+@@ -3,10 +3,13 @@
+ # found in the LICENSE file.
+ 
+ import("//build/config/cast.gni")
+ import("//build/config/chrome_build.gni")
++import("//build/config/wat.gni")
+ 
+ declare_args() {
+   # `enable_extensions` controls whether the full and stable extensions platform
+   # is compiled.
+-  enable_extensions = !is_android && !is_ios && !is_castos && !is_fuchsia
++  enable_extensions =
++      (!is_android || wat_android_extensions) && !is_ios && !is_castos &&
++      !is_fuchsia
+ 
