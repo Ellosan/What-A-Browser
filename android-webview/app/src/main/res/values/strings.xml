@@ -79,6 +79,42 @@
     <string name="unknown">unknown</string>
     <string name="about_detail">WAT %1$s · rendering with WebView %2$s</string>
 
+
+    <!-- Private windows -->
+    <string name="private_cat">Hiding cat</string>
+    <string name="private_cat_detail">A window that writes nothing down</string>
+    <string name="private_lion">Hiding lion</string>
+    <string name="private_lion_detail">Hiding cat, and everything through Tor</string>
+    <string name="cat_glyph">🐈</string>
+    <string name="lion_glyph">🦁</string>
+    <string name="private_notice">Nothing from this window is saved: no history, no cookies, no bookmarks, and it cannot read the ones you already have. It is thrown away when you close it. What you do here is still visible to the sites you visit and to whoever runs your network.</string>
+    <string name="close_private">Close this window</string>
+    <string name="private_needs_pie">Private windows need Android 9 or later. Before that, Android gives an app only one cookie jar, so a second window could not have one of its own — and a private window sharing the ordinary one would be private in name only.</string>
+
+    <!-- Tor -->
+    <string name="tor_connecting">Connecting through Tor…</string>
+    <string name="tor_notice">Tor hides where you are connecting from. This is not the Tor Browser: it does not make you look like everyone else, so a site can still tell one visitor from another.</string>
+    <string name="tor_failed_title">Not going through Tor</string>
+    <string name="tor_failed">Nothing answered on the Tor proxy at %1$s, or it is not Tor. This window needs Orbot running with its HTTP proxy switched on. Nothing has been loaded.</string>
+    <string name="tor_unsupported">This device\'s WebView cannot be pointed at a proxy, so the Tor window cannot be opened on it.</string>
+    <string name="tor_no_orbot">Orbot is not installed. It is the Tor app for Android, from the Guardian Project.</string>
+    <string name="tor_try_again">Try again</string>
+    <string name="tor_start_orbot">Start Orbot</string>
+    <string name="tor_verified">Tor confirmed by check.torproject.org</string>
+
+    <!-- History strips -->
+    <string name="back_history">Pages behind</string>
+    <string name="forward_history">Pages ahead</string>
+
+    <!-- Customising the menu -->
+    <string name="customize_menu">Customise the menu</string>
+    <string name="customize_detail">Which items appear, and in what order</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="up_glyph">▲</string>
+    <string name="down_glyph">▼</string>
+    <string name="reset_menu">Put the menu back</string>
+
     <!-- What a page is allowed to say -->
     <string name="site_says">%1$s says</string>
     <string name="leave_page">Leave</string>

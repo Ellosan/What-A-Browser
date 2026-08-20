@@ -26,6 +26,9 @@ An everyday browser, in about 2,000 lines of Kotlin:
 | **Fullscreen video** | `onShowCustomView`, so the fullscreen button on video sites works |
 | **Page dialogs** | `alert`, `confirm`, `prompt` and "leave this page?", each naming the site that is asking |
 | **Settings** | Search engine, home page, desktop sites, history, and clearing cookies, site storage and history |
+| **Private windows** | Hiding cat, and hiding lion with Tor — a process each, see below |
+| **History on the back button** | Held rather than tapped: the pages behind or ahead, as a list |
+| **A menu you arrange** | Which items appear and in what order |
 
 ### Tabs on a 4 GB phone
 
@@ -35,6 +38,50 @@ most recently used tabs keep a view; the rest are frozen to a saved state and
 restored — scroll position and back history included — when they come forward.
 `TabList` decides which to freeze, and a tab opened in the background costs
 nothing at all until it is looked at.
+
+### Private windows: hiding cat, and hiding lion
+
+Android's WebView keeps one cookie and storage jar per **process**. That single
+fact decides the whole design: a private tab living beside an ordinary one would
+share its cookies and be private in name only, so a private window here is a
+second process — declared in the manifest with `android:process=":cat"` — with a
+data directory of its own.
+
+- **Hiding cat** writes nothing down. No history, no suggestions, and no access
+  to the bookmarks or history the ordinary window has: the database belongs to
+  the ordinary process, and this one neither reads nor writes it. Its data
+  directory is deleted the next time a private window starts — on the way in
+  rather than on the way out, because a window the system kills never runs its
+  own cleanup. `FLAG_SECURE` keeps it out of screenshots and out of the recents
+  thumbnail, it never restores a session, and it never writes its tabs into saved
+  instance state, which the system may put on disk.
+- **Hiding lion** is hiding cat with every request through Tor, in a second
+  separate process so that turning Tor on cannot affect the other windows.
+
+Both need Android 9. Before that there is no `setDataDirectorySuffix`, so a
+second process cannot have a jar of its own, and the app says exactly that rather
+than opening a window that says "private" over the ordinary cookies.
+
+### What hiding lion is, and what it is not
+
+It routes through **Orbot's HTTP proxy** on `127.0.0.1:8118`. `ProxyController`
+speaks HTTP proxies only, so Orbot's SOCKS port cannot be used, and Orbot has to
+be running with its HTTP proxy switched on.
+
+It **fails closed**, deliberately, in two places. The proxy override carries no
+direct fallback, so if Orbot stops, pages fail rather than quietly going out over
+the ordinary network. And the window loads nothing at all until
+`check.torproject.org` has confirmed — through that same proxied WebView, not
+through the app's own HTTP client, which would answer for the wrong connection —
+that Tor is what it sees. The answer is read with `evaluateJavascript`, which is
+the app calling into the page; there is still no JavaScript interface anywhere in
+this browser.
+
+**It is not the Tor Browser.** Tor Browser's real work is making every user look
+identical — fonts, screen size, timing, canvas — and none of that is possible in
+a system WebView. This hides *where you are connecting from*, not *who is
+connecting*: a site can still tell one visitor from another. The window says so,
+once, before the first page.
 
 ### Downloads and the file name
 
@@ -96,25 +143,50 @@ how typing an address becomes a downgrade attack.
 
 ## The look
 
-`GlassSurface.kt` rebuilds Liquid Glass out of what Android draws cheaply: a
-tinted translucent fill, a top-down sheen, and a hairline edge.
+`GlassBar` is a pane of glass with the page showing through it, and as of 0.1.2
+that is meant literally rather than as a description of a tint.
 
-The colours are not transcribed. `Glass.kt` is generated from
-`crates/wat-theme/themes/liquid-glass.toml` — the same file the Rust browser
-reads — by `cargo run --example android_theme -p wat-theme`. Hand-copying is how
-two apps meant to look identical quietly stop matching. The generated file is
-committed so this build needs no Rust toolchain.
+`Backdrop` captures the strip of page behind each bar into a bitmap **at an
+eighth scale**, blurs it, lifts its saturation, and hands it to the bar to draw
+as its own backdrop. An eighth scale is not a compromise: a blur throws that
+detail away regardless, so a phone-width bar becomes about 135 pixels across
+before any work happens. Captures are debounced to after a scroll stops, so the
+expensive part never lands on a frame that has to be quick — and `Backdrop`
+times itself, switching off for the session after three captures over half a
+frame. A phone slow enough to notice this is a phone that should not be paying
+for it.
 
-**There is no live backdrop blur, on purpose.** Android has no way to blur live
-content behind an ordinary view: `RenderEffect` blurs the view it is set on, and
-`Window.setBackgroundBlurRadius` blurs what is behind the *window*, not what is
-behind a toolbar inside it. Doing it properly means capturing the WebView to a
-bitmap and blurring it every frame, which on a 4 GB phone costs more than the
-effect is worth. The glass reads as glass without it.
+Over the backdrop, the things that make glass read as a surface rather than as a
+tinted hole: vibrancy (colour lifted back up after the blur averaged it towards
+grey), the tint, a sheen that is bright along the top and gone by a third of the
+way down, a lit lower edge, a rim that is brightest at the top and fades around
+the sides rather than a stroke of one flat colour, and a soft shadow underneath.
+The corners are `GlassShape`'s continuous curve — two cubics per corner, starting
+about 1.53 radii along the edge — not a `cornerRadius`, because a circular arc
+joins a straight edge with a jump in curvature and the eye reads that jump as a
+pinched corner.
+
+The blur is in `Blur.kt`, in plain Kotlin over an `IntArray`, for two reasons:
+`RenderEffect` is Android 12 and later and this build starts at 7, and a blur is
+arithmetic, so it can be tested off a device. That matters — a blur that reads a
+row past the end of its buffer does not look wrong, it crashes.
+
+**On copying Apple's.** This is a look-alike built from scratch out of gradients,
+a blur and a curve. Apple's implementation is not published, and could not be
+lifted into an Android view if it were; what is copied is the *look* — which
+parts are bright, where the light goes, how the corners turn — and the parts
+Android cannot do at all are named below rather than glossed over.
+
+What is still missing against the real thing: the backdrop refreshes when the
+page settles rather than every frame, so during a scroll the glass is showing a
+slightly stale blur; there is no edge lensing, where the rim bends and magnifies
+what is behind it; and specular highlights do not move with the phone, because
+nothing here reads the gyroscope. The colours themselves are not guesswork —
+`Glass.kt` is generated from the same `liquid-glass.toml` the Rust browser reads.
 
 ## Why it launches quickly
 
-- **106 KB release APK**, against 18 MB for the native build. No shared library to
+- **121 KB release APK**, against 18 MB for the native build. No shared library to
   load, no Rust runtime to start.
 - **No Compose, no AppCompat.** Plain `Activity`, plain views, one dependency
   (`androidx.webkit`). Every library linked here is initialised before the first
@@ -144,10 +216,6 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## What is not built yet
 
-- **Private browsing.** Android's WebView has one cookie and storage jar per
-  process, so a private tab that shared it would be private in name only. Doing
-  it honestly means a second process, and it is not built. "Clear browsing data"
-  in settings is what there is instead.
 - **Session restore across a cold start.** Tabs survive rotation and being killed
   in the background, but closing the app forgets them. The back history is kept
   for the tab in front only — every tab's history would cross the 1 MB limit on
@@ -160,11 +228,14 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## Testing
 
-35 JVM unit tests, all of the security-relevant logic among them: the scheme
-policy, download file names, tab order and eviction, the search templates and the
-desktop user agent. They run on every push, before the APK is built, and CI then
-checks the built APK asks for `INTERNET` and nothing else and still refuses
-cleartext.
+64 JVM unit tests, all of the security-relevant logic among them: the scheme
+policy, download file names, tab order and eviction, the search templates, the
+desktop user agent, the Tor check's answer, the menu's stored layout and the blur
+kernel's bounds. They run on every push, before the APK is built, and CI then
+checks the built APK asks for `INTERNET` and nothing else, still refuses
+cleartext, and still gives each private window a process of its own — the last
+one because a private window that quietly started sharing the ordinary cookie jar
+would look and behave exactly the same.
 
 None of it has run on a phone — there is no device or emulator in the build
 environment, and no KVM to run one under. What is verified is the tests, the

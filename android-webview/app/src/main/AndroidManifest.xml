@@ -4,6 +4,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
+      Not a permission: `queries` is how an app is allowed to *see* that another
+      one is installed on Android 11 and later. Only Orbot, and only so the Tor
+      window can say "start Orbot" instead of "something went wrong".
+    -->
+    <queries>
+        <package android:name="org.torproject.android" />
+    </queries>
+
+    <!--
       Not requested, deliberately: location, camera, microphone, contacts,
       storage. A browser that never asks cannot be tricked into handing them to a
       page, and nothing here needs them.
@@ -41,5 +50,33 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!--
+          The private windows. Each runs in a process of its own, which is the
+          whole mechanism: Android's WebView keeps one cookie and storage jar per
+          process, so this is what makes a private window actually separate
+          rather than a flag on a tab. A task of its own too, so it appears
+          beside the ordinary browser rather than inside it, and leaves recents
+          when it is closed.
+        -->
+        <activity
+            android:name=".CatBrowserActivity"
+            android:autoRemoveFromRecents="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:process=":cat"
+            android:taskAffinity="com.whatabrowser.wat.webview.cat"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".LionBrowserActivity"
+            android:autoRemoveFromRecents="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:process=":lion"
+            android:taskAffinity="com.whatabrowser.wat.webview.lion"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

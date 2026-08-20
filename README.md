@@ -242,8 +242,20 @@ extensions, and no engine control.
 It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
 find in page, sharing, desktop sites, fullscreen video and settings — with only
 three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
-cannot afford sixteen. See [docs/WEBVIEW.md](docs/WEBVIEW.md) for what is
-hardened, what is deliberately missing, and why.
+cannot afford sixteen.
+
+Private browsing comes in two: **hiding cat**, which writes nothing down, and
+**hiding lion**, which is hiding cat with every request through Tor and which
+refuses to open until `check.torproject.org` has confirmed it. Each runs in a
+process of its own, because Android's WebView keeps one cookie jar per process
+and that is the only thing that makes a private window actually separate. The
+Tor window is not the Tor Browser and says so before the first page.
+
+The glass is real glass as of 0.1.2: the strip of page behind each bar is
+captured at an eighth scale, blurred, and drawn as the bar's backdrop, under a
+sheen, a lit lower edge and a rim that fades around the sides. See
+[docs/WEBVIEW.md](docs/WEBVIEW.md) for what is hardened, what Android cannot do,
+and why.
 
 ## Android on a Chromium fork
 

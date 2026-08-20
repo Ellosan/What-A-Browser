@@ -33,6 +33,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_HISTORY, true)
         set(value) = prefs.edit().putBoolean(KEY_HISTORY, value).apply()
 
+    /** The menu's order and visibility, as [MenuLayout] serialises it. */
+    var menuLayout: String?
+        get() = prefs.getString(KEY_MENU, null)
+        set(value) = prefs.edit().putString(KEY_MENU, value).apply()
+
     val searchTemplate: String get() = engine.template
 
     fun resetHomePage() = prefs.edit().remove(KEY_HOME).apply()
@@ -42,5 +47,6 @@ class Settings(context: Context) {
         const val KEY_HOME = "home"
         const val KEY_DESKTOP = "desktop_site"
         const val KEY_HISTORY = "keep_history"
+        const val KEY_MENU = "menu_layout"
     }
 }

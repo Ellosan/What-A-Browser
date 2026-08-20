@@ -21,7 +21,7 @@
         android:layout_marginTop="56dp"
         android:layout_marginBottom="64dp" />
 
-    <LinearLayout
+    <com.whatabrowser.wat.webview.GlassBar
         android:id="@+id/top_bar"
         android:layout_width="match_parent"
         android:layout_height="56dp"
@@ -35,6 +35,15 @@
             android:layout_weight="1"
             android:gravity="center_vertical"
             android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/mode_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="6dp"
+                android:paddingEnd="0dp"
+                android:textSize="15sp"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/lock"
@@ -95,9 +104,9 @@
             android:layout_height="2dp"
             android:max="100"
             android:visibility="gone" />
-    </LinearLayout>
+    </com.whatabrowser.wat.webview.GlassBar>
 
-    <LinearLayout
+    <com.whatabrowser.wat.webview.GlassBar
         android:id="@+id/find_bar"
         android:layout_width="match_parent"
         android:layout_height="48dp"
@@ -161,9 +170,9 @@
             android:text="@string/close_glyph"
             android:textColor="@color/text"
             android:textSize="17sp" />
-    </LinearLayout>
+    </com.whatabrowser.wat.webview.GlassBar>
 
-    <LinearLayout
+    <com.whatabrowser.wat.webview.GlassBar
         android:id="@+id/bottom_bar"
         android:layout_width="match_parent"
         android:layout_height="64dp"
@@ -226,7 +235,7 @@
             android:text="@string/home_glyph"
             android:textColor="@color/text"
             android:textSize="20sp" />
-    </LinearLayout>
+    </com.whatabrowser.wat.webview.GlassBar>
 
     <!-- Where a video goes when a page asks for the whole screen. -->
     <FrameLayout

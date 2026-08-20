@@ -139,6 +139,19 @@ jobs:
           "$aapt2" dump xmltree --file AndroidManifest.xml "$apk" \
               | grep -q "usesCleartextTraffic(0x010104ec)=false"
 
+          # Private windows are private *because* they run in their own process:
+          # Android's WebView keeps one cookie jar per process. Drop the process
+          # attribute and the window still says "Hiding cat" while sharing the
+          # ordinary window's cookies, which is the kind of regression nobody
+          # notices by using the app.
+          manifest=$("$aapt2" dump xmltree --file AndroidManifest.xml "$apk")
+          for process in ':cat' ':lion'; do
+              echo "$manifest" | grep -q "process(0x01010011)=\"$process\"" || {
+                  echo "the private window for $process must have a process of its own" >&2
+                  exit 1
+              }
+          done
+
   lint:
     name: Format and lints
     runs-on: ubuntu-latest

@@ -62,6 +62,9 @@ class Tabs(
 
         fun onFindResult(activeMatch: Int, matches: Int)
 
+        /** The page moved under the glass, so what is behind the bars changed. */
+        fun onPageScrolled()
+
         /** A long press on the page, with what was underneath it. */
         fun onLongPress(type: Int, target: String?): Boolean
 
@@ -203,6 +206,9 @@ class Tabs(
         view.setFindListener { activeMatchOrdinal, numberOfMatches, _ ->
             if (id == list.currentId) listener.onFindResult(activeMatchOrdinal, numberOfMatches)
         }
+        view.setOnScrollChangeListener { _, _, _, _, _ ->
+            if (id == list.currentId) listener.onPageScrolled()
+        }
         view.setOnLongClickListener {
             // `hitTestResult` is how a WebView says what is under the finger.
             // Asked for here rather than in the activity because the answer
@@ -276,6 +282,27 @@ class Tabs(
         }
         tab.url = url
         (live[tab.id] ?: thaw(tab)).loadUrl(url)
+    }
+
+    /**
+     * The pages behind and ahead of this one, and where in them it sits.
+     *
+     * The WebView keeps this list; a long press on back or forward shows it.
+     */
+    fun history(): Pair<List<HistoryStrip.Page>, Int> {
+        val view = current() ?: return emptyList<HistoryStrip.Page>() to -1
+        val entries = view.copyBackForwardList()
+        val pages = (0 until entries.size).map { index ->
+            val item = entries.getItemAtIndex(index)
+            HistoryStrip.Page(item.url.orEmpty(), item.title.orEmpty())
+        }
+        return pages to entries.currentIndex
+    }
+
+    /** Negative goes back, positive forward — [HistoryStrip] works out how far. */
+    fun goSteps(steps: Int) {
+        val view = current() ?: return
+        if (view.canGoBackOrForward(steps)) view.goBackOrForward(steps)
     }
 
     fun find(text: String) {
