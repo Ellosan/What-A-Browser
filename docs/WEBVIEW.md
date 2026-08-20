@@ -93,6 +93,22 @@ that Tor is what it sees. The answer is read with `evaluateJavascript`, which is
 the app calling into the page; there is still no JavaScript interface anywhere in
 this browser.
 
+**When it fails.** A Tor window is the hardest thing here to diagnose: it runs in
+its own process, and until 0.1.4 it blocked screenshots from the moment it opened
+— so its own error message could not be photographed, which is a mistake worth
+naming. Now `FLAG_SECURE` goes on with the first *page*, not with the window, and
+a failure offers "What went wrong": the reason with its exception chain, the
+device's architectures, whether this APK actually contains a tor library for it,
+whether the WebView supports proxying, the SOCKS and bridge addresses, and the
+last forty things tor said — timestamped relative to the window opening rather
+than to the clock, since a report gets pasted somewhere. It can be copied or
+shared, and it also goes to `adb logcat -s wat-tor`.
+
+The failure worth naming precisely is the one that has nothing to do with tor:
+the build ships one APK per architecture, and an APK for the wrong one has no
+`libtor.so` in it at all. That is checked before tor is started, and reported as
+such rather than as "could not find something".
+
 **It is not the Tor Browser.** Tor Browser's real work is making every user look
 identical — fonts, screen size, timing, canvas — and none of that is possible in
 a system WebView. This hides *where you are connecting from*, not *who is
@@ -288,11 +304,12 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## Testing
 
-87 JVM unit tests, all of the security-relevant logic among them: the scheme
+96 JVM unit tests, all of the security-relevant logic among them: the scheme
 policy, download file names, tab order and eviction, the search templates, the
 desktop user agent, the Tor check's answer, the SOCKS5 and HTTP CONNECT wire
-formats the Tor bridge speaks, the menu's stored layout, and the bounds of the
-blur and the lens. They run on every push, before the APK is built, and CI then
+formats the Tor bridge speaks, the menu's stored layout, the bounds of the blur
+and the lens, and the diagnostic report's own limits — that it is bounded, and
+that a newline in a value cannot forge a second field in it. They run on every push, before the APK is built, and CI then
 checks the built APK asks for `INTERNET` and nothing else, still refuses
 cleartext, still gives each private window a process of its own, and still
 carries a tor library for every architecture. The last two because both

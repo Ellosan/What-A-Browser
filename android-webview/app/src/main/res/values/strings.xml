@@ -97,9 +97,13 @@
     <string name="tor_failed_title">Not going through Tor</string>
     <string name="tor_failed">Tor did not start: %1$s. Nothing has been loaded.</string>
     <string name="tor_bootstrap">Building a circuit — %1$d%%</string>
+    <string name="tor_slow">tor did not finish connecting within %1$d seconds (it reached %2$d%%). A slow or filtered network is the usual reason.</string>
     <string name="tor_check_failed">check.torproject.org did not confirm this connection is Tor</string>
     <string name="tor_unsupported">This device\'s WebView cannot be pointed at a proxy, so the Tor window cannot be opened on it.</string>
     <string name="tor_try_again">Try again</string>
+    <string name="tor_details">What went wrong</string>
+    <string name="copy_details">Copy</string>
+    <string name="tor_details_copied">The details are on the clipboard</string>
     <string name="tor_verified">Tor confirmed by check.torproject.org</string>
 
     <!-- History strips -->

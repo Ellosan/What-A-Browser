@@ -8,6 +8,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.text.TextUtils
 import android.view.KeyEvent
@@ -90,6 +92,9 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
 
+    /** See [applyPrivacy]: set on the first page, not on the empty window. */
+    private var screenshotsBlocked = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_browser)
@@ -146,17 +151,35 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     private fun applyPrivacy() {
         if (!privacy.isPrivate) return
 
-        // Keeps the window out of screenshots and out of the thumbnail the
-        // system puts in recents — a private window that is legible in the task
-        // switcher is private only until someone else picks up the phone.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-
+        // `FLAG_SECURE` is applied when the first page loads, not here. It keeps
+        // a private window out of screenshots and out of the recents thumbnail,
+        // which is right — but in 0.1.3 it also made the Tor window's own error
+        // message impossible to screenshot, and an error nobody can get off the
+        // phone is an error nobody can act on. Before a page has loaded there is
+        // nothing private on screen to protect.
         modeBadge.visibility = View.VISIBLE
         modeBadge.text = getString(
             if (privacy.usesTor) R.string.lion_glyph else R.string.cat_glyph,
         )
         modeBadge.contentDescription = getString(
             if (privacy.usesTor) R.string.private_lion else R.string.private_cat,
+        )
+    }
+
+    /**
+     * Blocks screen capture from the moment a private window has a page in it.
+     *
+     * Deliberately not before: the gate and its failures are the one thing in a
+     * private window worth being able to photograph, and they contain nothing
+     * about what anyone was reading.
+     */
+    private fun blockScreenshotsOnce(url: String) {
+        if (screenshotsBlocked || !privacy.isPrivate) return
+        if (UrlResolver.decide(url) != UrlResolver.Decision.RENDER) return
+        screenshotsBlocked = true
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE,
         )
     }
 
@@ -516,33 +539,63 @@ open class BrowserActivity : Activity(), Tabs.Listener {
             .create()
         waiting.show()
 
-        TorGate.start(this) { state ->
-            when (state) {
-                is TorEngine.State.Starting -> waiting.setMessage(
-                    getString(R.string.tor_bootstrap, state.percent) + "\n\n" +
-                        getString(R.string.tor_notice),
-                )
+        // Nothing here has a deadline of its own: tor can bootstrap for as long
+        // as it likes, and a window stuck on "building a circuit" with no way
+        // forward is the failure that looks most like the app being broken.
+        val handler = Handler(Looper.getMainLooper())
+        var settled = false
+        var progress = 0
+        val giveUp = Runnable {
+            if (settled) return@Runnable
+            settled = true
+            waiting.dismiss()
+            showTorFailure(
+                firstPage,
+                getString(R.string.tor_slow, GATE_TIMEOUT_MS / 1000, progress),
+            )
+        }
+        handler.postDelayed(giveUp, GATE_TIMEOUT_MS)
 
-                is TorEngine.State.Ready -> TorGate.route(state.proxy) {
-                    // A WebView of its own, never attached to the window: the
-                    // check must go through the same proxied stack the browsing
-                    // will use, and it must not leave a page behind in a tab.
-                    val probe = WebView(this)
-                    SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
-                    TorGate.verify(probe) { throughTor ->
-                        probe.destroy()
-                        if (throughTor) {
+        TorGate.start(this) { state ->
+            // States keep arriving after the gate has resolved — tor goes on
+            // logging — and acting on them twice would put a second probe
+            // WebView behind a dialog that is no longer there.
+            if (settled) return@start
+            when (state) {
+                is TorEngine.State.Starting -> {
+                    progress = state.percent
+                    waiting.setMessage(
+                        getString(R.string.tor_bootstrap, state.percent) + "\n\n" +
+                            getString(R.string.tor_notice),
+                    )
+                }
+
+                is TorEngine.State.Ready -> {
+                    settled = true
+                    handler.removeCallbacks(giveUp)
+                    TorGate.route(state.proxy) {
+                        // A WebView of its own, never attached to the window: the
+                        // check must go through the same proxied stack the
+                        // browsing will use, and it must not leave a page behind
+                        // in a tab.
+                        val probe = WebView(this)
+                        SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
+                        TorGate.verify(probe) { throughTor ->
+                            probe.destroy()
                             waiting.dismiss()
-                            Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
-                            firstPage?.let(tabs::open)
-                        } else {
-                            waiting.dismiss()
-                            showTorFailure(firstPage, getString(R.string.tor_check_failed))
+                            if (throughTor) {
+                                Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
+                                firstPage?.let(tabs::open)
+                            } else {
+                                showTorFailure(firstPage, getString(R.string.tor_check_failed))
+                            }
                         }
                     }
                 }
 
                 is TorEngine.State.Failed -> {
+                    settled = true
+                    handler.removeCallbacks(giveUp)
                     waiting.dismiss()
                     showTorFailure(firstPage, state.reason)
                 }
@@ -550,7 +603,17 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         }
     }
 
+    /**
+     * What a failed Tor window says, and how to get it out of the phone.
+     *
+     * The details button is the point. This window blocks screenshots the moment
+     * it has a page in it, it runs in its own process, and the interesting part
+     * of the failure is usually in a layer that leaves no visible trace — so the
+     * report is offered as text to copy or share rather than as something to
+     * photograph.
+     */
     private fun showTorFailure(firstPage: String?, reason: String) {
+        val details = TorEngine.diagnostics(this, reason)
         AlertDialog.Builder(this)
             .setTitle(R.string.tor_failed_title)
             .setMessage(getString(R.string.tor_failed, reason))
@@ -559,7 +622,36 @@ open class BrowserActivity : Activity(), Tabs.Listener {
                 TorGate.stop()
                 openThroughTor(firstPage)
             }
+            .setNeutralButton(R.string.tor_details) { _, _ ->
+                showTorDetails(firstPage, details)
+            }
             .setNegativeButton(R.string.close_private) { _, _ -> finish() }
+            .show()
+    }
+
+    private fun showTorDetails(firstPage: String?, details: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.tor_details)
+            .setMessage(details)
+            .setCancelable(false)
+            .setPositiveButton(R.string.copy_details) { _, _ ->
+                copy(details)
+                showTorFailure(firstPage, getString(R.string.tor_details_copied))
+            }
+            .setNeutralButton(R.string.share) { _, _ ->
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, details)
+                        },
+                        getString(R.string.share),
+                    ),
+                )
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                showTorFailure(firstPage, details.substringAfter("reason: ").substringBefore('\n'))
+            }
             .show()
     }
 
@@ -825,5 +917,14 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     private companion object {
         const val REQUEST_FILES = 1
+
+        /**
+         * How long the gate waits for tor before offering a way out.
+         *
+         * Generous: a first bootstrap on a slow connection genuinely takes a
+         * couple of minutes, and giving up early on a Tor window that would have
+         * worked is worse than waiting.
+         */
+        const val GATE_TIMEOUT_MS = 150_000L
     }
 }
