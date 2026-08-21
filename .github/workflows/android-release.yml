@@ -1,0 +1,181 @@
+name: Android release
+
+# Tagging `Android-v0.1.4` builds the WebView browser and publishes its APKs.
+#
+# The version in the tag has to match the one in the app, and every APK is put
+# through `verify-apk.sh` before anything is published — a release is the one
+# artifact nobody re-checks by hand, so a bad build must not be able to become
+# one.
+on:
+  push:
+    tags: ["Android-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish as, or blank for a dry run"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build, check and sign
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+
+      # The tag names a version; the APK reports one. A release whose file says
+      # something different from its title is a support problem forever.
+      - name: Check the tag against the app's version
+        run: |
+          tag="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
+          declared=$(grep -oE 'versionName = "[^"]+"' android-webview/app/build.gradle.kts | cut -d'"' -f2)
+          echo "declared version: $declared"
+          if [ -n "$tag" ]; then
+              expected="Android-v$declared"
+              [ "$tag" = "$expected" ] || {
+                  echo "tag $tag does not match the app's version ($expected)" >&2
+                  exit 1
+              }
+          fi
+          echo "VERSION=$declared" >> "$GITHUB_ENV"
+
+      # Runs the unit tests first, then builds one APK per architecture plus a
+      # universal one.
+      - name: Build
+        run: ./android-webview/build.sh release
+
+      - name: Check what is in them
+        run: |
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              ./android-webview/verify-apk.sh "$apk"
+          done
+
+      # Signed with the project's key when the repository has one, so that a
+      # release can be installed over the last one. Without it the APKs are
+      # published unsigned and the notes say so, because an APK signed with a
+      # throwaway key made on a CI runner cannot be upgraded either — it would
+      # only look installable.
+      - name: Sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p release
+          tools=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
+          signed=no
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+              echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+              signed=yes
+          fi
+
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              abi=$(basename "$apk" | sed -E 's/^app-(.*)-release-unsigned\.apk$/\1/')
+              out="release/WAT-Android-v${VERSION}-${abi}.apk"
+              "$tools/zipalign" -p -f 4 "$apk" "$out"
+              if [ "$signed" = yes ]; then
+                  "$tools/apksigner" sign \
+                      --ks "$RUNNER_TEMP/keystore.jks" \
+                      --ks-pass env:KEYSTORE_PASSWORD \
+                      --ks-key-alias "$KEY_ALIAS" \
+                      --key-pass env:KEY_PASSWORD \
+                      "$out"
+                  "$tools/apksigner" verify --print-certs "$out" | head -2
+              fi
+          done
+          rm -f "$RUNNER_TEMP/keystore.jks"
+          echo "SIGNED=$signed" >> "$GITHUB_ENV"
+
+          # Without a key, the release APKs above cannot be installed at all. A
+          # debug-signed build can, so one is included to make the release useful
+          # today — clearly named, because it is signed with a key this runner
+          # made and threw away, so the next release cannot install over it.
+          if [ "$signed" != yes ]; then
+              ./android-webview/gradlew --project-dir android-webview --no-daemon assembleDebug
+              cp android-webview/app/build/outputs/apk/debug/app-universal-debug.apk \
+                 "release/WAT-Android-v${VERSION}-universal-debug-signed.apk"
+          fi
+
+          cd release
+          sha256sum ./*.apk > SHA256SUMS
+          ls -lh
+
+      # Written here rather than in the release step so the notes can say what
+      # actually happened in this run — signed or not, and with what in it.
+      - name: Write the release notes
+        run: |
+          {
+            echo "WAT ${VERSION} for Android: the browser on Android's system WebView, with WAT's interface around it."
+            echo
+            echo "### Installing"
+            echo
+            echo "Take the APK for your phone's architecture, or \`universal\` if you are not sure — it carries all four and is larger for it. Most phones since 2017 are \`arm64-v8a\`."
+            echo
+            if [ "$SIGNED" = yes ]; then
+              echo "The APKs are signed with the project's release key, so this one installs over the last."
+            else
+              echo "**The per-architecture APKs are unsigned**, because no signing key is configured for this repository, and Android will not install an unsigned APK. Either take \`universal-debug-signed\`, which installs as it is — uninstall any earlier build first, since it is signed with a throwaway key — or sign one yourself:"
+              echo
+              echo '```sh'
+              echo "apksigner sign --ks my-release-key.jks WAT-Android-v${VERSION}-arm64-v8a.apk"
+              echo '```'
+              echo
+              echo "To have releases arrive signed, add \`ANDROID_KEYSTORE_BASE64\` (\`base64 -w0 my-release-key.jks\`), \`ANDROID_KEYSTORE_PASSWORD\`, \`ANDROID_KEY_ALIAS\` and \`ANDROID_KEY_PASSWORD\` to the repository's secrets. Use the same key every time or the next release cannot be installed over this one."
+            fi
+            echo
+            echo "\`SHA256SUMS\` has the checksums."
+            echo
+            echo "### What is in it"
+            echo
+            echo "Tabs, bookmarks, history, downloads, uploads, find in page, sharing, desktop sites, fullscreen video and settings. Two private modes: **hiding cat**, which writes nothing down, and **hiding lion**, which is hiding cat with every request through Tor — carried in the app, with nothing else to install. Each runs in its own process, because Android's WebView keeps one cookie jar per process."
+            echo
+            echo "The Tor window is **not the Tor Browser**: it hides where you are connecting from, not who is connecting. It says so before the first page, and refuses to open until check.torproject.org has confirmed it is going through Tor."
+            echo
+            echo "### Checked before publishing"
+            echo
+            echo "Every APK here passed \`verify-apk.sh\`: one permission (\`INTERNET\`) and no others, cleartext refused, a separate process for each private window, and a tor library for every architecture it claims to support. The unit tests ran before the build."
+          } > release/NOTES.md
+          cat release/NOTES.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    # A manual run builds and checks everything but publishes nothing unless a
+    # tag was named for it.
+    if: github.event_name == 'push' || inputs.tag != ''
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: release
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          name: WAT ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} for Android
+          body_path: release/NOTES.md
+          # 0.x, and the Tor window has never run on a phone anyone has reported
+          # back from. Marked as a pre-release until it has.
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.apk
+            release/SHA256SUMS

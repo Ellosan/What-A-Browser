@@ -13,8 +13,8 @@ android {
         // this in step with the other Android app.
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.1.4"
+        versionCode = 5
+        versionName = "0.1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,6 +85,15 @@ dependencies {
     // devices whose framework predates them.
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
+    // Already on the classpath through the tor resources, but named here because
+    // this app calls `AppInitializer` itself: the tor libraries are registered by
+    // an androidx.startup initializer, and a private window runs in a process
+    // where the startup provider never fires. See BrowserApp.
+    implementation("androidx.startup:startup-runtime:1.1.1")
     implementation("io.matthewnelson.kmp-tor:resource-noexec-tor:409.5.0")
+    // Carries the tor libraries and the initializer that registers them. Already
+    // pulled in transitively; named here because this app refers to that
+    // initializer by name rather than leaving it to androidx.startup.
+    implementation("io.matthewnelson.kmp-tor:resource-compilation-lib-tor:409.5.0")
     testImplementation("junit:junit:4.13.2")
 }

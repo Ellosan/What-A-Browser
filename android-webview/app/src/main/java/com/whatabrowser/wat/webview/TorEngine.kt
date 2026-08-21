@@ -43,6 +43,17 @@ object TorEngine {
 
     private const val TAG = "wat-tor"
 
+    /**
+     * kmp-tor's androidx.startup initializer, which registers where the native
+     * libraries are.
+     *
+     * Held here as a name because the class is `internal` to the library. It is
+     * checked by a test at build time, so a version of kmp-tor that moves it
+     * fails here rather than on a phone.
+     */
+    const val RESOURCE_INITIALIZER =
+        "io.matthewnelson.kmp.tor.resource.compilation.lib.tor.KmpTorResourceInitializer"
+
     private val main = Handler(Looper.getMainLooper())
 
     private var runtime: TorRuntime? = null
@@ -246,6 +257,9 @@ object TorEngine {
         throwable.stackTrace.firstOrNull()?.let { parts.add("at $it") }
         return parts.joinToString(" <- ")
     }
+
+    /** For the parts of startup that happen before this object is touched. */
+    fun record(line: String) = note(line)
 
     private fun note(line: String) {
         log.add(line)

@@ -121,49 +121,14 @@ jobs:
       - name: Test and build
         run: ./android-webview/build.sh release
 
-      # An APK that declares more than it needs is the failure worth catching
-      # here: this browser asks for INTERNET and nothing else.
-      - name: Check what it asks for
+      # The same checks the release workflow runs, on the same script: an APK
+      # that declares more than it needs, loads cleartext, shares a cookie jar
+      # between a private window and an ordinary one, or has lost tor for an
+      # architecture. All four are invisible from the outside once they regress.
+      - name: Check what is in it
         run: |
-          aapt2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
-          # The universal APK, which carries every architecture: whatever is
-          # checked here is true of the per-architecture ones as well.
-          apk=$(find android-webview/app/build/outputs/apk/release -name '*universal*.apk' | head -1)
-          test -n "$apk" || { echo "no universal APK to check" >&2; exit 1; }
-          permissions=$("$aapt2" dump badging "$apk" | grep "^uses-permission" || true)
-          echo "$permissions"
-          if [ "$(echo "$permissions" | wc -l)" -ne 1 ] || \
-             ! echo "$permissions" | grep -q "android.permission.INTERNET"; then
-              echo "the WebView browser should ask for INTERNET and nothing else" >&2
-              exit 1
-          fi
-          # Cleartext must stay off; a browser that loads http:// silently is the
-          # thing this app is meant not to be.
-          "$aapt2" dump xmltree --file AndroidManifest.xml "$apk" \
-              | grep -q "usesCleartextTraffic(0x010104ec)=false"
-
-          # Private windows are private *because* they run in their own process:
-          # Android's WebView keeps one cookie jar per process. Drop the process
-          # attribute and the window still says "Hiding cat" while sharing the
-          # ordinary window's cookies, which is the kind of regression nobody
-          # notices by using the app.
-          manifest=$("$aapt2" dump xmltree --file AndroidManifest.xml "$apk")
-          for process in ':cat' ':lion'; do
-              echo "$manifest" | grep -q "process(0x01010011)=\"$process\"" || {
-                  echo "the private window for $process must have a process of its own" >&2
-                  exit 1
-              }
-          done
-
-          # Tor is carried in the APK rather than asked of another app, so a
-          # build that lost the library would offer a Tor window that cannot
-          # work. Every architecture, since a missing one fails only on the
-          # phones nobody testing it happens to hold.
-          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-              unzip -l "$apk" | grep -q "lib/$abi/libtor.so" || {
-                  echo "no tor library for $abi" >&2
-                  exit 1
-              }
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              ./android-webview/verify-apk.sh "$apk"
           done
 
   lint:

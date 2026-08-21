@@ -14,7 +14,13 @@ package com.whatabrowser.wat.webview
  */
 object TorReport {
 
-    private const val MAX_VALUE = 200
+    /**
+     * Long enough for a reason to survive.
+     *
+     * This was 200, and the first real failure it reported was a library saying
+     * exactly what the app was missing — cut off mid-sentence at the useful part.
+     */
+    private const val MAX_VALUE = 700
 
     private const val MAX_TOTAL = 4000
 

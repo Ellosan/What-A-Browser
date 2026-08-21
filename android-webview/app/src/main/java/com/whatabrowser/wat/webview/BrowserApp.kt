@@ -2,7 +2,10 @@ package com.whatabrowser.wat.webview
 
 import android.app.Application
 import android.os.Build
+import android.util.Log
 import android.webkit.WebView
+import androidx.startup.AppInitializer
+import androidx.startup.Initializer
 import androidx.annotation.RequiresApi
 
 /**
@@ -38,6 +41,44 @@ class BrowserApp : Application() {
         // window that is killed — by the system, or by the reader swiping it
         // away — never gets to run its own cleanup.
         PrivateStorage.wipe(this, mode)
+
+        if (mode.usesTor) registerTorLibraries()
+    }
+
+    /**
+     * Tells the tor library where its native libraries are, in this process.
+     *
+     * kmp-tor registers them from an `androidx.startup` initializer, which runs
+     * from a `ContentProvider` — and a `ContentProvider` is created only in the
+     * process that hosts it, which is the main one. The Tor window is a process
+     * of its own, precisely so that its cookies and its proxy are its own, and in
+     * that process the initializer had never run: tor started, looked for
+     * `libtor.so`, and reported it missing while the file sat in the app's
+     * library directory all along.
+     *
+     * So it is initialised by hand here, where `Application.onCreate` runs in
+     * every process. Only in the Tor process: the ordinary window never loads any
+     * of this, which is what keeps its cold start the way it was.
+     */
+    private fun registerTorLibraries() {
+        try {
+            // By name because the class is `internal` to the library and cannot
+            // be referred to directly from Kotlin. A name in a string is a name
+            // that can rot, so `TorInitializerTest` fails the build if a future
+            // version of kmp-tor moves it — rather than letting the Tor window
+            // discover it on someone's phone.
+            @Suppress("UNCHECKED_CAST")
+            val initializer = Class.forName(TorEngine.RESOURCE_INITIALIZER) as Class<out Initializer<Any>>
+            AppInitializer.getInstance(this).initializeComponent(initializer)
+            // Into the window's own diagnostics as well as logcat, so the next
+            // report says whether this ran at all.
+            TorEngine.record("tor resource initializer ran")
+        } catch (throwable: Throwable) {
+            // Reported rather than thrown: the window's own gate will say tor
+            // could not start, and this line says why in the diagnostics.
+            TorEngine.record("tor resource initializer FAILED: $throwable")
+            Log.e(TAG, "tor resource initializer failed", throwable)
+        }
     }
 
     // Only ever reached from behind the API 28 check above; the annotation is
@@ -48,5 +89,9 @@ class BrowserApp : Application() {
     } else {
         @Suppress("DEPRECATION")
         Application.getProcessName()
+    }
+
+    private companion object {
+        const val TAG = "wat-tor"
     }
 }

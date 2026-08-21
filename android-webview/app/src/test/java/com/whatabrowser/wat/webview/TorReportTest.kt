@@ -25,9 +25,13 @@ class TorReportTest {
     }
 
     @Test
-    fun `a runaway value is shortened`() {
+    fun `a runaway value is shortened, but not so far that it stops explaining`() {
+        // The limit was 200, and the first real failure it reported was a library
+        // saying exactly what was missing — cut off mid-sentence at the useful
+        // part. Long enough to survive now, still bounded.
         val text = TorReport.render(listOf("reason" to "x".repeat(5000)), emptyList())
-        assertTrue(text.lines().all { it.length <= 210 })
+        assertTrue(text.lines().all { it.length <= 720 })
+        assertTrue(text.lines().any { it.length > 300 })
         assertTrue(text.contains("…"))
     }
 

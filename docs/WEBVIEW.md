@@ -93,6 +93,18 @@ that Tor is what it sees. The answer is read with `evaluateJavascript`, which is
 the app calling into the page; there is still no JavaScript interface anywhere in
 this browser.
 
+**The process trap, for anyone reading this before writing something similar.**
+kmp-tor registers where its native libraries are from an `androidx.startup`
+initializer, and that runs from a `ContentProvider` — which Android creates only
+in the process that hosts it, the main one. A Tor window is a process of its own,
+on purpose, and in that process the initializer had never run: tor started,
+looked for `libtor.so`, and reported it missing while the file sat in the app's
+own library directory. `BrowserApp` now initialises it by hand, in that process
+only. The class is `internal` to the library so it can only be reached by name,
+and a test fails the build if a future version moves it — a name in a string is a
+name that rots, and the failure it replaces was invisible until someone opened
+the window on a phone.
+
 **When it fails.** A Tor window is the hardest thing here to diagnose: it runs in
 its own process, and until 0.1.4 it blocked screenshots from the moment it opened
 — so its own error message could not be photographed, which is a mistake worth
@@ -289,6 +301,28 @@ To regenerate the palette after editing the theme:
 cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid-glass.toml \
   > android-webview/app/src/main/java/com/whatabrowser/wat/webview/Glass.kt
 ```
+
+
+## Releases
+
+Tagging `Android-v0.1.5` builds the APKs and publishes them, through
+`.github/workflows/android-release.yml`. The tag has to match the version in
+`app/build.gradle.kts` — a release whose file reports a different version from
+its title is a support problem forever — and every APK goes through
+`verify-apk.sh` before anything is published, since a release is the one artifact
+nobody re-checks by hand.
+
+One APK per architecture plus a universal one, named
+`WAT-Android-v<version>-<abi>.apk`, with `SHA256SUMS` beside them.
+
+**Signing.** If the repository has `ANDROID_KEYSTORE_BASE64` (from
+`base64 -w0 my-release-key.jks`), `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` in its secrets, the APKs are
+signed with that key and each release installs over the last. Without them the
+per-architecture APKs are published unsigned — Android will not install those —
+and a debug-signed universal APK is included so the release is usable today. That
+one is signed with a key the runner made and discarded, so it cannot be upgraded
+over; use the same real key every time or every release needs an uninstall first.
 
 ## What is not built yet
 
