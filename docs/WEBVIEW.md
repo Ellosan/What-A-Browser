@@ -317,7 +317,9 @@ its title is a support problem forever — and every APK goes through
 nobody re-checks by hand.
 
 One APK per architecture plus a universal one, named
-`WAT-Android-v<version>-<abi>.apk`, with `SHA256SUMS` beside them.
+`WAT-Android-v<version>-<abi>.apk`, with `SHA256SUMS` beside them. Publishing the
+same version twice updates the release in place rather than making a second one,
+so a mistake in the notes or the title can be corrected by pushing again.
 
 **Signing.** If the repository has `ANDROID_KEYSTORE_BASE64` (from
 `base64 -w0 my-release-key.jks`), `ANDROID_KEYSTORE_PASSWORD`,
