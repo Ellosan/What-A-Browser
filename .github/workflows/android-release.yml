@@ -1,14 +1,21 @@
 name: Android release
 
-# Tagging `Android-v0.1.4` builds the WebView browser and publishes its APKs.
+# Publishes the WebView browser's APKs. Three ways in:
 #
-# The version in the tag has to match the one in the app, and every APK is put
-# through `verify-apk.sh` before anything is published — a release is the one
-# artifact nobody re-checks by hand, so a bad build must not be able to become
-# one.
+#   - push the tag `Android-v0.1.6`
+#   - push a branch `release/Android-v0.1.6`, for anyone whose credentials can
+#     write branches but not tags — the release then creates the tag itself, at
+#     the commit that was built
+#   - run it by hand with a version named, or with none for a dry run that builds
+#     and checks everything and publishes nothing
+#
+# Whichever way in, the version named has to match the one in the app, and every
+# APK goes through `verify-apk.sh` first — a release is the one artifact nobody
+# re-checks by hand, so a bad build must not be able to become one.
 on:
   push:
     tags: ["Android-v*"]
+    branches: ["release/Android-v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -23,6 +30,8 @@ jobs:
   build:
     name: Build, check and sign
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -33,18 +42,23 @@ jobs:
 
       # The tag names a version; the APK reports one. A release whose file says
       # something different from its title is a support problem forever.
-      - name: Check the tag against the app's version
+      - name: Work out what is being published
+        id: version
         run: |
-          tag="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
+          case "$GITHUB_REF" in
+              refs/tags/*)           tag="${GITHUB_REF#refs/tags/}" ;;
+              refs/heads/release/*)  tag="${GITHUB_REF#refs/heads/release/}" ;;
+              *)                     tag="${{ inputs.tag }}" ;;
+          esac
           declared=$(grep -oE 'versionName = "[^"]+"' android-webview/app/build.gradle.kts | cut -d'"' -f2)
           echo "declared version: $declared"
-          if [ -n "$tag" ]; then
-              expected="Android-v$declared"
-              [ "$tag" = "$expected" ] || {
-                  echo "tag $tag does not match the app's version ($expected)" >&2
-                  exit 1
-              }
+          echo "publishing as:    ${tag:-(dry run)}"
+
+          if [ -n "$tag" ] && [ "$tag" != "Android-v$declared" ]; then
+              echo "::error::$tag does not match the app's version (Android-v$declared)" >&2
+              exit 1
           fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "VERSION=$declared" >> "$GITHUB_ENV"
 
       # Runs the unit tests first, then builds one APK per architecture plus a
@@ -204,9 +218,9 @@ jobs:
     name: Publish
     needs: build
     runs-on: ubuntu-latest
-    # A manual run builds and checks everything but publishes nothing unless a
-    # tag was named for it.
-    if: github.event_name == 'push' || inputs.tag != ''
+    # A run with no version named builds and checks everything and publishes
+    # nothing.
+    if: needs.build.outputs.tag != ''
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -216,8 +230,12 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
-          name: WAT ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} for Android
+          tag_name: ${{ needs.build.outputs.tag }}
+          # The tag may not exist yet — a branch push creates it here. Without
+          # this it would be created against the default branch rather than
+          # against the commit that was actually built and checked.
+          target_commitish: ${{ github.sha }}
+          name: WAT ${{ needs.build.outputs.tag }} for Android
           body_path: release/NOTES.md
           # 0.x, and the Tor window has never run on a phone anyone has reported
           # back from. Marked as a pre-release until it has.

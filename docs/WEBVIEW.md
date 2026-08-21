@@ -305,8 +305,12 @@ cargo run --example android_theme -p wat-theme -- crates/wat-theme/themes/liquid
 
 ## Releases
 
-Tagging `Android-v0.1.5` builds the APKs and publishes them, through
-`.github/workflows/android-release.yml`. The tag has to match the version in
+Tagging `Android-v0.1.6` builds the APKs and publishes them, through
+`.github/workflows/android-release.yml`. Pushing a branch named
+`release/Android-v0.1.6` does the same — for anyone whose credentials can write
+branches but not tags, which includes every agent that has worked on this
+repository; the release then creates the tag itself, against the commit that was
+actually built and checked. The version named has to match the one in
 `app/build.gradle.kts` — a release whose file reports a different version from
 its title is a support problem forever — and every APK goes through
 `verify-apk.sh` before anything is published, since a release is the one artifact
