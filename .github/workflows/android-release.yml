@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -59,6 +60,7 @@ jobs:
               exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$declared" >> "$GITHUB_OUTPUT"
           echo "VERSION=$declared" >> "$GITHUB_ENV"
 
       # Runs the unit tests first, then builds one APK per architecture plus a
@@ -235,7 +237,9 @@ jobs:
           # this it would be created against the default branch rather than
           # against the commit that was actually built and checked.
           target_commitish: ${{ github.sha }}
-          name: WAT ${{ needs.build.outputs.tag }} for Android
+          # The version, not the tag: the tag already says Android, and
+          # "WAT Android-v0.1.6 for Android" is how the first one came out.
+          name: WAT ${{ needs.build.outputs.version }} for Android
           body_path: release/NOTES.md
           # 0.x, and the Tor window has never run on a phone anyone has reported
           # back from. Marked as a pre-release until it has.
