@@ -8,8 +8,10 @@ import android.net.Uri
 import android.net.http.SslError
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.io.ByteArrayInputStream
 import android.widget.Toast
 
 /**
@@ -20,8 +22,29 @@ import android.widget.Toast
  */
 class BrowserClient(
     private val context: Context,
+    private val settings: Settings,
     private val onNavigation: (url: String, loading: Boolean) -> Unit,
 ) : WebViewClient() {
+
+    /**
+     * Requests refused before they leave the phone.
+     *
+     * This runs for every subresource of every page, on a background thread, so
+     * it does as little as it can: a setting read and a suffix match. See
+     * [TrackerBlocker] for what is on the list and what is deliberately not.
+     *
+     * A blocked request is answered with nothing rather than left to time out —
+     * a page waiting on a tracker it will never get is a page that looks broken
+     * because of the blocker.
+     */
+    override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest,
+    ): WebResourceResponse? {
+        if (!settings.blockTrackers) return null
+        if (!TrackerBlocker.blocksUrl(request.url.toString())) return null
+        return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+    }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()

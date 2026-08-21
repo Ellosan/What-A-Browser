@@ -240,7 +240,11 @@ the engine through Play, so it cannot fall behind the way a fork can. No
 extensions, and no engine control.
 
 It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
-find in page, sharing, desktop sites, fullscreen video and settings — with only
+find in page, sharing, desktop sites, fullscreen video and a settings screen in
+Chrome's shape with more privacy in it than Chrome offers — tracker blocking on
+by default, refuse-all-cookies, clear-everything-on-exit — and userscripts
+instead of extensions, since a WebView can host the second honestly and not the
+first. Only
 three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
 cannot afford sixteen.
 

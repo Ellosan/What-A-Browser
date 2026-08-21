@@ -4,7 +4,9 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -94,6 +96,30 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     /** See [applyPrivacy]: set on the first page, not on the empty window. */
     private var screenshotsBlocked = false
+
+    /**
+     * Applies the theme setting.
+     *
+     * A plain `Activity` has no `AppCompatDelegate.setDefaultNightMode`, so the
+     * night bit is set on the configuration this window is built from. It has to
+     * happen here, before any resource is read, which is why choosing a theme in
+     * settings restarts the window.
+     */
+    override fun attachBaseContext(base: Context) {
+        val choice = Settings(base).theme
+        if (choice == Settings.ThemeChoice.SYSTEM) {
+            super.attachBaseContext(base)
+            return
+        }
+        val configuration = Configuration(base.resources.configuration)
+        configuration.uiMode = (configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            if (choice == Settings.ThemeChoice.DARK) {
+                Configuration.UI_MODE_NIGHT_YES
+            } else {
+                Configuration.UI_MODE_NIGHT_NO
+            }
+        super.attachBaseContext(base.createConfigurationContext(configuration))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -208,8 +234,10 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         findViewById<View>(R.id.menu).setOnClickListener(::showMenu)
 
         // A private window suggests nothing, because it can see nothing: there
-        // is no store behind it to suggest from.
-        store?.takeIf { privacy.suggestsFromHistory }?.let { address.setAdapter(SuggestionAdapter(this, it)) }
+        // is no store behind it to suggest from. Nor does an ordinary one, if
+        // the reader would rather it did not.
+        store?.takeIf { privacy.suggestsFromHistory && settings.suggestFromHistory }
+            ?.let { address.setAdapter(SuggestionAdapter(this, it)) }
         address.setOnItemClickListener { parent, _, position, _ ->
             (parent.getItemAtPosition(position) as? BrowserStore.Entry)?.let {
                 address.clearFocus()
@@ -336,6 +364,12 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         tabs.destroy()
         val closing = isFinishing
         super.onDestroy()
+
+        if (closing && !privacy.isPrivate && settings.clearOnExit) {
+            // Everything a private window would have thrown away, for someone who
+            // wants that from the ordinary one too.
+            SettingsPanel.clearEverything(store)
+        }
 
         if (closing && privacy.isPrivate) {
             // Tor goes with the window it was started for.
@@ -793,6 +827,17 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     private fun showSettings() {
         val shelf = store ?: return
         SettingsPanel.show(this, settings, shelf) {
+            // The preferences that live on a WebView — script, images, text size,
+            // Safe Browsing, userscripts — are re-applied to every open tab, and
+            // the address bar's suggestions come or go with their setting.
+            tabs.refreshSettings()
+            address.setAdapter(
+                if (settings.suggestFromHistory && privacy.suggestsFromHistory) {
+                    SuggestionAdapter(this, shelf)
+                } else {
+                    null
+                },
+            )
             // The home page or the engine may have moved; nothing on screen
             // depends on either until the next tap, so there is nothing to redraw.
         }.show()

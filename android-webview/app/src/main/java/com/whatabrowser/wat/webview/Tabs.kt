@@ -86,6 +86,8 @@ class Tabs(
 
     private val defaultUserAgent: String by lazy { WebSettings.getDefaultUserAgent(activity) }
 
+    private val userScripts = UserScripts(activity, settings)
+
     val count: Int get() = list.count
 
     fun current(): WebView? = list.currentId?.let { live[it] }
@@ -190,11 +192,13 @@ class Tabs(
             FrameLayout.LayoutParams.MATCH_PARENT,
         )
         SecureWebView.configure(view, debuggable = BuildConfig.DEBUG)
+        SecureWebView.apply(view, settings)
+        userScripts.attach(view)
 
         if (settings.desktopSite) desktop.add(id)
         applyUserAgent(view, id in desktop)
 
-        view.webViewClient = BrowserClient(activity) { url, loading ->
+        view.webViewClient = BrowserClient(activity, settings) { url, loading ->
             onNavigation(id, url, loading)
         }
         view.webChromeClient = ChromeClient(id)
@@ -247,7 +251,10 @@ class Tabs(
     private fun onNavigation(id: Int, url: String, loading: Boolean) {
         val tab = list.byId(id) ?: return
         if (url.isNotEmpty()) tab.url = url
-        if (!loading) listener.onVisit(url, tab.title)
+        if (!loading) {
+            listener.onVisit(url, tab.title)
+            runUserScripts(id, url)
+        }
         if (id != list.currentId) return
         listener.onPageChanged(url, tab.title, loading)
     }
@@ -341,6 +348,27 @@ class Tabs(
     }
 
     // --- lifecycle ---------------------------------------------------------
+
+    /**
+     * Re-applies the settings to every live view.
+     *
+     * Called when the settings screen closes. Only the preferences are
+     * re-applied — everything in `SecureWebView.configure` is set once, on
+     * purpose.
+     */
+    fun refreshSettings() {
+        userScripts.clear()
+        for (view in live.values) {
+            SecureWebView.apply(view, settings)
+            userScripts.attach(view)
+        }
+    }
+
+    /** Runs any end-of-document userscripts for a page that just finished. */
+    private fun runUserScripts(id: Int, url: String) {
+        val view = live[id] ?: return
+        userScripts.onPageFinished(view, url)
+    }
 
     fun onPause() {
         current()?.onPause()

@@ -119,6 +119,56 @@
     <string name="down_glyph">▼</string>
     <string name="reset_menu">Put the menu back</string>
 
+
+    <!-- Settings sections -->
+    <string name="section_general">GENERAL</string>
+    <string name="section_privacy">PRIVACY AND SECURITY</string>
+    <string name="section_userscripts">USERSCRIPTS</string>
+    <string name="section_accessibility">ACCESSIBILITY</string>
+    <string name="section_about">ABOUT</string>
+
+    <string name="theme">Theme</string>
+    <string name="theme_system">Follow the phone</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+
+    <string name="block_trackers">Block trackers</string>
+    <string name="block_trackers_detail">Refuses requests to %1$d hosts whose only purpose is following people between sites. Chrome has no setting for this. It is not an ad blocker: hosts that also serve content are left alone, so pages keep working.</string>
+    <string name="safe_browsing">Safe Browsing</string>
+    <string name="safe_browsing_detail">Checks addresses against Google\'s phishing and malware list. That means the engine sends Google a partial hash of each address.</string>
+    <string name="block_all_cookies">Refuse all cookies</string>
+    <string name="block_all_cookies_detail">Signs you out of everything, everywhere. Third-party cookies are refused either way, and that is not a setting.</string>
+    <string name="clear_on_exit">Clear everything on exit</string>
+    <string name="suggest_from_history">Suggest from history</string>
+    <string name="javascript">JavaScript</string>
+    <string name="images">Images</string>
+
+    <!-- Userscripts -->
+    <string name="userscripts_enabled">Run userscripts</string>
+    <string name="userscripts_detail">Userscripts instead of extensions. An extension is a program with power over the browser; a userscript is JavaScript that runs inside one page with that page\'s own privileges. A WebView cannot host the first honestly, and can host the second.</string>
+    <string name="manage_userscripts">Userscripts</string>
+    <string name="installed_count">%1$d installed</string>
+    <string name="userscripts_note">A script runs on the sites its own @match lines name. Read those before installing something you did not write.</string>
+    <string name="install_from_address">Install from an address</string>
+    <string name="paste_a_script">Paste a script</string>
+    <string name="userscript_address_hint">https://…/something.user.js</string>
+    <string name="paste_hint">Paste the whole script, metadata block and all</string>
+    <string name="fetch">Fetch</string>
+    <string name="fetching">Fetching…</string>
+    <string name="install">Install</string>
+    <string name="remove">Remove</string>
+    <string name="not_a_userscript">That has no ==UserScript== metadata block, so it is not a userscript</string>
+    <string name="userscript_not_installed">Not installed</string>
+    <string name="installed_runs_on">It will run on: %1$s</string>
+    <string name="installed_missing">It asks for %1$s, which this browser does not provide — those need a privilege page content does not get here. The rest of the script still runs.</string>
+
+    <!-- Accessibility -->
+    <string name="text_size">Text size — %1$d%%</string>
+    <string name="force_zoom">Always allow zoom</string>
+    <string name="darken_sites">Dark theme for sites</string>
+
+    <string name="about_never">This browser has no telemetry, no crash reporting, no sync, no account, and no password storage. It asks for one permission, INTERNET. Certificate errors are never overridable, cleartext is never loaded, and third-party cookies are never accepted — none of those are settings.</string>
+
     <!-- What a page is allowed to say -->
     <string name="site_says">%1$s says</string>
     <string name="leave_page">Leave</string>

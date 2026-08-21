@@ -25,7 +25,9 @@ An everyday browser, in about 2,000 lines of Kotlin:
 | **Desktop site** | Per tab, by user agent |
 | **Fullscreen video** | `onShowCustomView`, so the fullscreen button on video sites works |
 | **Page dialogs** | `alert`, `confirm`, `prompt` and "leave this page?", each naming the site that is asking |
-| **Settings** | Search engine, home page, desktop sites, history, and clearing cookies, site storage and history |
+| **Settings** | Chrome's sections, and more privacy than Chrome offers — see below |
+| **Tracker blocking** | On by default, and a thing Chrome has no setting for at all |
+| **Userscripts** | Instead of extensions, which a WebView cannot host honestly |
 | **Private windows** | Hiding cat, and hiding lion with Tor bundled in the app — a process each, see below |
 | **History on the back button** | Held rather than tapped: the pages behind or ahead, as a list |
 | **A menu you arrange** | Which items appear and in what order |
@@ -133,6 +135,59 @@ architecture so nobody downloads four copies, and the library is compressed in
 the APK because this is sideloaded rather than delivered by a store. Cold start
 is untouched: none of it is loaded, or even class-loaded, unless a Tor window is
 opened, and that happens in a different process from the ordinary browser.
+
+### Settings, and the ones Chrome does not have
+
+The screen follows Chrome's shape — general, privacy and security, accessibility,
+about — because that is where people know to look. What differs is the privacy
+section:
+
+| | |
+| --- | --- |
+| **Block trackers** | Refuses requests to ~70 hosts whose only purpose is following people between sites. Chrome has no such setting; this is what people install an extension for. It is *not* an ad blocker: hosts that also serve content are left alone on purpose, because a blocker that visibly breaks pages gets switched off and then protects nobody |
+| **Refuse all cookies** | Not just third-party ones. Signs you out of everything, which is why it is off by default and why Chrome buries it |
+| **Clear everything on exit** | Cookies, site storage and history, when the browser closes |
+| **Suggest from history** | Local-only suggestions, and they can be turned off. Nothing is ever sent to a suggestion service — Chrome cannot say that |
+| **Safe Browsing** | On by default, but a setting, because it means the engine sends Google a partial hash of each address |
+| **JavaScript, images** | App-wide. Chrome has these per site; a WebView has no per-site settings to hang them on |
+
+And what is deliberately **not** a setting, which is the other half of the story:
+certificate errors are never overridable, cleartext is never loaded, pages can
+never reach `file://`, third-party cookies are never accepted, and location,
+camera and microphone are refused for every site because the app holds none of
+those permissions. Chrome makes several of these optional. A switch that weakens
+the browser is a switch that gets flipped once and forgotten.
+
+The about section says the rest plainly: no telemetry, no crash reporting, no
+sync, no account, no password storage, one permission.
+
+### Userscripts, instead of extensions
+
+An extension is a program with power over the browser. A userscript is JavaScript
+that runs inside one page with that page's own privileges and nothing more. A
+WebView can host the second honestly and cannot host the first at all — which is
+what `chromium/` exists for — so this is the answer to "extensions" here.
+
+Scripts are installed from an address or pasted in, and then they are a file in
+`filesDir/userscripts`. **Nothing is fetched at page load**: a browser that
+downloaded a script every time it opened a page would be running whatever that
+address serves today, which is remote code execution with extra steps. Installing
+is a deliberate act; after it, the copy on disk is what runs, and there is no
+auto-update.
+
+Where a script runs is the whole question, so the `@match` handling is strict and
+tested: a star for the scheme means http or https and not `file://`, a host
+wildcard only ever stands for whole labels (`*.example.com` does not match
+`notexample.com`), a host with anything odd in it is not a host, and a script with
+no usable `@match` runs nowhere. `document-start` scripts are registered per
+origin *and* fenced inside the page by a generated address check, because the
+platform's origin rules cannot express a path.
+
+`GM_addStyle`, `GM_setValue`, `GM_getValue`, `GM_deleteValue`, `GM_listValues`,
+`GM_registerMenuCommand`, `GM_log` and `GM_info` are provided by a shim.
+`GM_xmlhttpRequest` and friends are deliberately absent and throw with their own
+name in the message: their point is issuing requests the page could not make
+itself, which is exactly the privilege page content does not get here.
 
 ### Downloads and the file name
 
@@ -349,11 +404,12 @@ over; use the same real key every time or every release needs an uninstall first
 
 ## Testing
 
-96 JVM unit tests, all of the security-relevant logic among them: the scheme
+124 JVM unit tests, all of the security-relevant logic among them: the scheme
 policy, download file names, tab order and eviction, the search templates, the
 desktop user agent, the Tor check's answer, the SOCKS5 and HTTP CONNECT wire
 formats the Tor bridge speaks, the menu's stored layout, the bounds of the blur
-and the lens, and the diagnostic report's own limits — that it is bounded, and
+and the lens, the tracker list's suffix matching, the userscript match patterns
+and the guard they generate, and the diagnostic report's own limits — that it is bounded, and
 that a newline in a value cannot forge a second field in it. They run on every push, before the APK is built, and CI then
 checks the built APK asks for `INTERNET` and nothing else, still refuses
 cleartext, still gives each private window a process of its own, and still
