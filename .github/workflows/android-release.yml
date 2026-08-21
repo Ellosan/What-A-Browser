@@ -58,8 +58,46 @@ jobs:
               ./android-webview/verify-apk.sh "$apk"
           done
 
+      # Which of the four signing secrets this run can actually see.
+      #
+      # Names only, never values — a secret's value would be masked in the log
+      # anyway, and there is no reason to go near one. This exists because the
+      # failure it catches is silent: a secret added under a slightly different
+      # name means the release is published unsigned and nothing says why.
+      - name: Look for a signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          present=0
+          missing=""
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+              if [ -n "${!name:-}" ]; then
+                  echo "  $name: present"
+                  present=$((present + 1))
+              else
+                  echo "  $name: ABSENT"
+                  missing="$missing $name"
+              fi
+          done
+
+          if [ "$present" -eq 4 ]; then
+              echo "SIGNING=yes" >> "$GITHUB_ENV"
+          elif [ "$present" -eq 0 ]; then
+              echo "No signing key is configured; the APKs will be published unsigned."
+              echo "SIGNING=no" >> "$GITHUB_ENV"
+          else
+              # Half a configuration is a typo in a secret's name, not a choice.
+              # Publishing unsigned APKs to a release someone meant to sign is
+              # worse than not publishing.
+              echo "::error::signing is half-configured — missing:$missing" >&2
+              exit 1
+          fi
+
       # Signed with the project's key when the repository has one, so that a
-      # release can be installed over the last one. Without it the APKs are
+      # release can be installed over the last. Without it the APKs are
       # published unsigned and the notes say so, because an APK signed with a
       # throwaway key made on a CI runner cannot be upgraded either — it would
       # only look installable.
@@ -72,35 +110,44 @@ jobs:
         run: |
           mkdir -p release
           tools=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
-          signed=no
 
-          if [ -n "$KEYSTORE_BASE64" ]; then
+          if [ "$SIGNING" = yes ]; then
               echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
-              signed=yes
+              # A keystore that did not decode is a mangled secret — usually
+              # `base64` without `-w0`, pasted with the line breaks lost.
+              test -s "$RUNNER_TEMP/keystore.jks" || {
+                  echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to anything" >&2
+                  exit 1
+              }
           fi
 
           for apk in android-webview/app/build/outputs/apk/release/*.apk; do
               abi=$(basename "$apk" | sed -E 's/^app-(.*)-release-unsigned\.apk$/\1/')
               out="release/WAT-Android-v${VERSION}-${abi}.apk"
               "$tools/zipalign" -p -f 4 "$apk" "$out"
-              if [ "$signed" = yes ]; then
+              if [ "$SIGNING" = yes ]; then
                   "$tools/apksigner" sign \
                       --ks "$RUNNER_TEMP/keystore.jks" \
                       --ks-pass env:KEYSTORE_PASSWORD \
                       --ks-key-alias "$KEY_ALIAS" \
                       --key-pass env:KEY_PASSWORD \
                       "$out"
-                  "$tools/apksigner" verify --print-certs "$out" | head -2
               fi
           done
           rm -f "$RUNNER_TEMP/keystore.jks"
-          echo "SIGNED=$signed" >> "$GITHUB_ENV"
 
-          # Without a key, the release APKs above cannot be installed at all. A
-          # debug-signed build can, so one is included to make the release useful
-          # today — clearly named, because it is signed with a key this runner
-          # made and threw away, so the next release cannot install over it.
-          if [ "$signed" != yes ]; then
+          # The certificate this run signed with, once. Its fingerprint is how
+          # you tell that a release was signed with the key you meant — and that
+          # the next one will install over it.
+          if [ "$SIGNING" = yes ]; then
+              "$tools/apksigner" verify --print-certs "release/WAT-Android-v${VERSION}-universal.apk" \
+                  | grep -iE "signer #1 (certificate DN|certificate SHA-256)"
+          else
+              # Without a key, the release APKs above cannot be installed at all.
+              # A debug-signed build can, so one is included to make the release
+              # useful today — clearly named, because it is signed with a key
+              # this runner made and threw away, so the next release cannot
+              # install over it.
               ./android-webview/gradlew --project-dir android-webview --no-daemon assembleDebug
               cp android-webview/app/build/outputs/apk/debug/app-universal-debug.apk \
                  "release/WAT-Android-v${VERSION}-universal-debug-signed.apk"
@@ -121,7 +168,7 @@ jobs:
             echo
             echo "Take the APK for your phone's architecture, or \`universal\` if you are not sure — it carries all four and is larger for it. Most phones since 2017 are \`arm64-v8a\`."
             echo
-            if [ "$SIGNED" = yes ]; then
+            if [ "$SIGNING" = yes ]; then
               echo "The APKs are signed with the project's release key, so this one installs over the last."
             else
               echo "**The per-architecture APKs are unsigned**, because no signing key is configured for this repository, and Android will not install an unsigned APK. Either take \`universal-debug-signed\`, which installs as it is — uninstall any earlier build first, since it is signed with a throwaway key — or sign one yourself:"

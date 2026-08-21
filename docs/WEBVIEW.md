@@ -318,7 +318,12 @@ One APK per architecture plus a universal one, named
 **Signing.** If the repository has `ANDROID_KEYSTORE_BASE64` (from
 `base64 -w0 my-release-key.jks`), `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` in its secrets, the APKs are
-signed with that key and each release installs over the last. Without them the
+signed with that key and each release installs over the last. The run says which
+of the four it can see — names only, never values — and refuses to publish if
+only some are set, because half a configuration is a secret added under a
+slightly different name, and publishing unsigned APKs to a release someone meant
+to sign is worse than not publishing. When it does sign, it prints the
+certificate's subject and SHA-256 so you can check it is the key you meant. Without them the
 per-architecture APKs are published unsigned — Android will not install those —
 and a debug-signed universal APK is included so the release is usable today. That
 one is signed with a key the runner made and discarded, so it cannot be upgraded
