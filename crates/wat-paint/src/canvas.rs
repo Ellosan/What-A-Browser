@@ -1019,7 +1019,23 @@ impl Canvas {
         if filter.is_none() {
             return;
         }
-        let padding = filter.blur * 3.0 + 2.0;
+        // A blur discards detail by definition, so computing a wide one at full
+        // resolution is work thrown away: at quarter scale the result is
+        // indistinguishable and there are sixteen times fewer pixels to sweep
+        // three box passes over. Narrow blurs stay at full resolution, where the
+        // difference would show.
+        let factor = blur_scale(filter.blur);
+
+        // How far the blur can actually reach, rather than a guess at it.
+        //
+        // `blur_rgba_f32` runs three box passes whose sizes come from
+        // `box_sizes_for_sigma`: for sigma s each has radius about s, so the
+        // furthest an input pixel can travel is about 3s. Here sigma is
+        // `blur / 2 / factor` in downscaled pixels, which is `1.5 * blur` back
+        // in full ones. This was `blur * 3.0` — exactly twice the reach — and
+        // every one of those extra pixels was read, averaged and then
+        // multiplied by a zero weight.
+        let padding = filter.blur * 1.5 + factor as f32 + 2.0;
         let sample_area = shape.rect.expand(padding);
         let Some((sx0, sy0, sx1, sy1)) = self.pixel_range(sample_area, &Clip::unbounded()) else {
             return;
@@ -1030,18 +1046,6 @@ impl Canvas {
             return;
         }
 
-        // A blur discards detail by definition, so computing a wide one at full
-        // resolution is work thrown away: at quarter scale the result is
-        // indistinguishable and there are sixteen times fewer pixels to sweep
-        // three box passes over. Narrow blurs stay at full resolution, where the
-        // difference would show.
-        let factor: usize = if filter.blur >= 24.0 {
-            4
-        } else if filter.blur >= 12.0 {
-            2
-        } else {
-            1
-        };
         let small_width = region_width.div_ceil(factor);
         let small_height = region_height.div_ceil(factor);
 
@@ -1096,39 +1100,30 @@ impl Canvas {
             );
         }
 
-        // Only the shape gets filtered. The padding around it was sampled so the
-        // blur had something to read past the edge, but walking all of it here
-        // and throwing away every pixel whose coverage came out zero cost more
-        // than the blur itself did.
-        let Some((cx0, cy0, cx1, cy1)) = self.pixel_range(shape.bounding_rect().expand(1.0), clip)
-        else {
-            return;
-        };
-        let interior = self.solid_interior(&shape, clip);
-        for y in cy0..cy1 {
-            let py = y as f32 + 0.5;
-            let row = (y.saturating_sub(sy0) as usize).min(region_height - 1);
-            let (solid_start, solid_end) = Self::solid_columns(interior, y, cx0, cx1);
-            for x in cx0..cx1 {
-                let px = x as f32 + 0.5;
-                let coverage = if x >= solid_start && x < solid_end {
-                    1.0
-                } else {
-                    shape.coverage(px, py) * clip.coverage(px, py)
-                };
-                if coverage <= 0.0 {
-                    continue;
-                }
-                let column = (x.saturating_sub(sx0) as usize).min(region_width - 1);
-                let [pr, pg, pb, alpha] =
-                    sample_region(&region, small_width, small_height, factor, column, row);
+        // The colour adjustments happen here, once per *downscaled* pixel,
+        // rather than in the loop below once per full-resolution pixel under the
+        // shape. For a quarter-scale region that is sixteen times fewer
+        // saturations, and it is the same arithmetic on the same values: the
+        // blur is linear, so adjusting before or after sampling agrees.
+        //
+        // A backdrop that is opaque everywhere — which it is, whenever glass
+        // sits over a page rather than over the edge of the window — also lets
+        // the un-premultiply happen here instead of three divides per pixel
+        // below.
+        let straight = region.chunks_exact(4).all(|texel| texel[3] >= 0.999);
+        let adjust = filter.grayscale > 0.0
+            || (filter.saturate - 1.0).abs() > f32::EPSILON
+            || (filter.brightness - 1.0).abs() > f32::EPSILON
+            || (filter.contrast - 1.0).abs() > f32::EPSILON;
+        if adjust || straight {
+            for texel in region.chunks_exact_mut(4) {
+                let alpha = texel[3];
                 if alpha <= 0.0 {
                     continue;
                 }
-                // Un-premultiply, then apply the colour adjustments.
-                let mut r = pr / alpha;
-                let mut g = pg / alpha;
-                let mut b = pb / alpha;
+                let mut r = texel[0] / alpha;
+                let mut g = texel[1] / alpha;
+                let mut b = texel[2] / alpha;
                 if filter.grayscale > 0.0 {
                     let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                     r += (luma - r) * filter.grayscale;
@@ -1151,10 +1146,99 @@ impl Canvas {
                     g = (g - 0.5) * filter.contrast + 0.5;
                     b = (b - 0.5) * filter.contrast + 0.5;
                 }
-                let filtered = Color::from_f32(r, g, b, alpha);
-                // Replace rather than blend: this *is* the backdrop.
-                let existing = self.pixel(x, y);
-                self.set_pixel(x, y, existing.mix(filtered, coverage));
+                // Straight colour when every pixel is opaque, so the loop below
+                // can sample and blend without dividing; premultiplied
+                // otherwise, since that is the only space bilinear sampling can
+                // mix transparency in without dragging colour out of nothing.
+                if straight {
+                    texel[0] = r;
+                    texel[1] = g;
+                    texel[2] = b;
+                } else {
+                    texel[0] = r * alpha;
+                    texel[1] = g * alpha;
+                    texel[2] = b * alpha;
+                }
+            }
+        }
+
+        // Only the shape gets filtered. The padding around it was sampled so the
+        // blur had something to read past the edge, but walking all of it here
+        // and throwing away every pixel whose coverage came out zero cost more
+        // than the blur itself did.
+        let Some((cx0, cy0, cx1, cy1)) = self.pixel_range(shape.bounding_rect().expand(1.0), clip)
+        else {
+            return;
+        };
+        let interior = self.solid_interior(&shape, clip);
+
+        // One row of the region, already interpolated vertically. The sampling
+        // below is bilinear, and half of a bilinear read — which row pair, and
+        // how far between them — is the same for every pixel across a row. Doing
+        // it once per row rather than once per pixel is the difference between
+        // reading sixteen values per pixel and reading eight.
+        let mut vertical = vec![0f32; small_width * 4];
+        let scale = 1.0 / factor as f32;
+
+        for y in cy0..cy1 {
+            let py = y as f32 + 0.5;
+            let row = (y.saturating_sub(sy0) as usize).min(region_height - 1);
+
+            let fy = ((row as f32 + 0.5) * scale - 0.5).max(0.0);
+            let y0 = (fy.floor() as usize).min(small_height - 1);
+            let y1 = (y0 + 1).min(small_height - 1);
+            let ty = fy - y0 as f32;
+            let (top, bottom) = (y0 * small_width * 4, y1 * small_width * 4);
+            for index in 0..small_width * 4 {
+                let above = region[top + index];
+                vertical[index] = above + (region[bottom + index] - above) * ty;
+            }
+
+            let (solid_start, solid_end) = Self::solid_columns(interior, y, cx0, cx1);
+            for x in cx0..cx1 {
+                let px = x as f32 + 0.5;
+                let coverage = if x >= solid_start && x < solid_end {
+                    1.0
+                } else {
+                    shape.coverage(px, py) * clip.coverage(px, py)
+                };
+                if coverage <= 0.0 {
+                    continue;
+                }
+                let column = (x.saturating_sub(sx0) as usize).min(region_width - 1);
+
+                let fx = ((column as f32 + 0.5) * scale - 0.5).max(0.0);
+                let x0 = (fx.floor() as usize).min(small_width - 1);
+                let x1 = (x0 + 1).min(small_width - 1);
+                let tx = fx - x0 as f32;
+                let (left, right) = (x0 * 4, x1 * 4);
+                let pr = vertical[left] + (vertical[right] - vertical[left]) * tx;
+                let pg = vertical[left + 1] + (vertical[right + 1] - vertical[left + 1]) * tx;
+                let pb = vertical[left + 2] + (vertical[right + 2] - vertical[left + 2]) * tx;
+                let alpha = vertical[left + 3] + (vertical[right + 3] - vertical[left + 3]) * tx;
+                if alpha <= 0.0 {
+                    continue;
+                }
+                // Everything else was done above, on the small buffer.
+                let filtered = if straight {
+                    Color::from_f32(pr, pg, pb, alpha)
+                } else {
+                    Color::from_f32(pr / alpha, pg / alpha, pb / alpha, alpha)
+                };
+                // Replace rather than blend: this *is* the backdrop. Where the
+                // shape covers the pixel completely — which is most of a panel,
+                // all of it but the rounded corners and the antialiased rim —
+                // that replacement is a write, with nothing to read first.
+                if coverage >= 1.0 {
+                    let index = self.index(x, y);
+                    self.pixels[index] = filtered.r;
+                    self.pixels[index + 1] = filtered.g;
+                    self.pixels[index + 2] = filtered.b;
+                    self.pixels[index + 3] = filtered.a;
+                } else {
+                    let existing = self.pixel(x, y);
+                    self.set_pixel(x, y, existing.mix(filtered, coverage));
+                }
             }
         }
     }
@@ -1291,38 +1375,6 @@ fn sample_mask(
     let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
     let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
     (top + (bottom - top) * ty) / 255.0
-}
-
-/// Reads a downsampled region at the full-resolution pixel `(column, row)`.
-///
-/// Bilinear, so a quarter-scale blur comes back as a smooth gradient rather than
-/// in visible four-pixel steps. At a `factor` of one the coordinates land exactly
-/// on a pixel and this is a plain lookup, which keeps unscaled blurs bit-exact.
-fn sample_region(
-    region: &[f32],
-    width: usize,
-    height: usize,
-    factor: usize,
-    column: usize,
-    row: usize,
-) -> [f32; 4] {
-    let fx = ((column as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
-    let fy = ((row as f32 + 0.5) / factor as f32 - 0.5).max(0.0);
-    let x0 = (fx.floor() as usize).min(width - 1);
-    let y0 = (fy.floor() as usize).min(height - 1);
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-    let tx = fx - x0 as f32;
-    let ty = fy - y0 as f32;
-
-    let mut out = [0f32; 4];
-    for (channel, value) in out.iter_mut().enumerate() {
-        let at = |x: usize, y: usize| region[(y * width + x) * 4 + channel];
-        let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
-        let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
-        *value = top + (bottom - top) * ty;
-    }
-    out
 }
 
 fn box_blur_f32(
