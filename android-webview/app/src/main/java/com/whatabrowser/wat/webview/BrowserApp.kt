@@ -69,15 +69,26 @@ class BrowserApp : Application() {
             // discover it on someone's phone.
             @Suppress("UNCHECKED_CAST")
             val initializer = Class.forName(TorEngine.RESOURCE_INITIALIZER) as Class<out Initializer<Any>>
-            AppInitializer.getInstance(this).initializeComponent(initializer)
-            // Into the window's own diagnostics as well as logcat, so the next
-            // report says whether this ran at all.
-            TorEngine.record("tor resource initializer ran")
+
+            // By now [TorStartupProvider] has run: content providers are created
+            // before `Application.onCreate`. Asking is all that is left, because
+            // this particular initializer refuses to be started any way but
+            // eagerly — which is what 0.1.5 got wrong by calling
+            // `initializeComponent` and being told "cannot be initialized
+            // lazily".
+            val eager = AppInitializer.getInstance(this).isEagerlyInitialized(initializer)
+            TorEngine.record("tor resource initializer eager=$eager")
+            if (!eager) {
+                TorEngine.record(
+                    "the tor startup provider did not run in this process " +
+                        "(${TorStartupProvider::class.java.name})",
+                )
+            }
         } catch (throwable: Throwable) {
             // Reported rather than thrown: the window's own gate will say tor
             // could not start, and this line says why in the diagnostics.
-            TorEngine.record("tor resource initializer FAILED: $throwable")
-            Log.e(TAG, "tor resource initializer failed", throwable)
+            TorEngine.record("tor resource initializer check FAILED: $throwable")
+            Log.e(TAG, "tor resource initializer check failed", throwable)
         }
     }
 

@@ -44,6 +44,16 @@ for process in ':cat' ':lion'; do
         || fail "the private window for $process has no process of its own"
 done
 
+# The Tor window's startup provider has to exist and has to be bound to the Tor
+# process. Without it, androidx.startup never runs there, kmp-tor never learns
+# where its libraries are, and tor reports libtor.so missing while the file sits
+# in the app's own library directory. That failure has happened twice; it cannot
+# be seen from outside the app, so it is checked here.
+echo "$manifest" | grep -q 'name(0x01010003)="[^"]*TorStartupProvider"' \
+    || fail "no TorStartupProvider — the Tor process would have no androidx.startup"
+echo "$manifest" | grep -A4 'TorStartupProvider' | grep -q 'process(0x01010011)=":lion"' \
+    || fail "TorStartupProvider is not bound to the :lion process"
+
 # Tor is carried in the APK rather than asked of another app, so every
 # architecture this APK claims to support needs a tor library in it. A missing
 # one fails only on the phones nobody testing it happens to hold.
