@@ -28,3 +28,9 @@
 /android-webview/build/
 /android-webview/app/build/
 /android-webview/local.properties
+
+# A committed signing key is deliberate, so it is not ignored — but a keystore
+# left anywhere else is a private key in a repository by accident.
+*.jks
+*.keystore
+!signing/release.jks

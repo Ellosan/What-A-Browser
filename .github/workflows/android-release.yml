@@ -99,8 +99,29 @@ jobs:
               fi
           done
 
+          # Second best, for a repository whose owner cannot add secrets: a
+          # keystore committed to the repository itself, with its password beside
+          # it. That key is public by construction — see signing/README.md for
+          # what that does and does not buy — but it is *stable*, so every
+          # release installs over the last, which unsigned APKs cannot do.
+          if [ "$present" -eq 0 ] && [ -f signing/release.jks ] && [ -f signing/release.properties ]; then
+              echo "  a committed keystore at signing/release.jks"
+              # shellcheck disable=SC1091
+              . ./signing/release.properties
+              {
+                  echo "SIGNING=yes"
+                  echo "SIGNING_KIND=committed"
+                  echo "KEYSTORE_FILE=signing/release.jks"
+                  echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+                  echo "KEY_ALIAS=$KEY_ALIAS"
+                  echo "KEY_PASSWORD=$KEY_PASSWORD"
+              } >> "$GITHUB_ENV"
+              exit 0
+          fi
+
           if [ "$present" -eq 4 ]; then
               echo "SIGNING=yes" >> "$GITHUB_ENV"
+              echo "SIGNING_KIND=secret" >> "$GITHUB_ENV"
           elif [ "$present" -eq 0 ]; then
               echo "No signing key is configured; the APKs will be published unsigned."
               echo "SIGNING=no" >> "$GITHUB_ENV"
@@ -127,7 +148,7 @@ jobs:
           mkdir -p release
           tools=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
 
-          if [ "$SIGNING" = yes ]; then
+          if [ "$SIGNING" = yes ] && [ "${SIGNING_KIND:-}" = secret ]; then
               echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
               # A keystore that did not decode is a mangled secret — usually
               # `base64` without `-w0`, pasted with the line breaks lost.
@@ -135,6 +156,9 @@ jobs:
                   echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to anything" >&2
                   exit 1
               }
+              keystore="$RUNNER_TEMP/keystore.jks"
+          elif [ "$SIGNING" = yes ]; then
+              keystore="$KEYSTORE_FILE"
           fi
 
           for apk in android-webview/app/build/outputs/apk/release/*.apk; do
@@ -143,7 +167,7 @@ jobs:
               "$tools/zipalign" -p -f 4 "$apk" "$out"
               if [ "$SIGNING" = yes ]; then
                   "$tools/apksigner" sign \
-                      --ks "$RUNNER_TEMP/keystore.jks" \
+                      --ks "$keystore" \
                       --ks-pass env:KEYSTORE_PASSWORD \
                       --ks-key-alias "$KEY_ALIAS" \
                       --key-pass env:KEY_PASSWORD \
@@ -184,7 +208,9 @@ jobs:
             echo
             echo "Take the APK for your phone's architecture, or \`universal\` if you are not sure — it carries all four and is larger for it. Most phones since 2017 are \`arm64-v8a\`."
             echo
-            if [ "$SIGNING" = yes ]; then
+            if [ "$SIGNING" = yes ] && [ "${SIGNING_KIND:-}" = committed ]; then
+              echo "The APKs are signed with the repository's own key, so this release installs over the last one. That key is committed to the repository and therefore public: it makes updates work, and it is not proof of who built the file. Check \`SHA256SUMS\` against the build log if that matters to you."
+            elif [ "$SIGNING" = yes ]; then
               echo "The APKs are signed with the project's release key, so this one installs over the last."
             else
               echo "**The per-architecture APKs are unsigned**, because no signing key is configured for this repository, and Android will not install an unsigned APK. Either take \`universal-debug-signed\`, which installs as it is — uninstall any earlier build first, since it is signed with a throwaway key — or sign one yourself:"
