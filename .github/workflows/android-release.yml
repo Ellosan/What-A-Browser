@@ -161,11 +161,17 @@ jobs:
               keystore="$KEYSTORE_FILE"
           fi
 
+          # Said out loud, because zipalign and apksigner are both silent when
+          # they succeed. A step built only out of silent commands is a step
+          # that cannot tell you how far it got when one of them stops.
+          echo "signing with $(basename "$tools")"
           for apk in android-webview/app/build/outputs/apk/release/*.apk; do
               abi=$(basename "$apk" | sed -E 's/^app-(.*)-release-unsigned\.apk$/\1/')
               out="release/WAT-Android-v${VERSION}-${abi}.apk"
+              echo "  $abi: aligning"
               "$tools/zipalign" -p -f 4 "$apk" "$out"
               if [ "$SIGNING" = yes ]; then
+                  echo "  $abi: signing"
                   "$tools/apksigner" sign \
                       --ks "$keystore" \
                       --ks-pass env:KEYSTORE_PASSWORD \
@@ -176,12 +182,20 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/keystore.jks"
 
-          # The certificate this run signed with, once. Its fingerprint is how
-          # you tell that a release was signed with the key you meant — and that
-          # the next one will install over it.
+          # The certificate this run signed with. Its fingerprint is how you tell
+          # that a release was signed with the key you meant — and that the next
+          # one will install over it.
+          #
+          # Printed whole rather than filtered through grep. `apksigner verify`
+          # is a real check and its exit status is worth failing on; `| grep` is
+          # not, and it turned a signed release into a lost one: grep exits 1
+          # when it does not match, `bash -e` takes the pipeline's status from
+          # the last command, and grep says nothing on the way out. Five APKs
+          # signed correctly and the step failed with no output at all, because
+          # a newer apksigner worded a line differently than this pattern
+          # expected. A cosmetic printout must not be able to fail a release.
           if [ "$SIGNING" = yes ]; then
-              "$tools/apksigner" verify --print-certs "release/WAT-Android-v${VERSION}-universal.apk" \
-                  | grep -iE "signer #1 (certificate DN|certificate SHA-256)"
+              "$tools/apksigner" verify --print-certs "release/WAT-Android-v${VERSION}-universal.apk"
           else
               # Without a key, the release APKs above cannot be installed at all.
               # A debug-signed build can, so one is included to make the release
