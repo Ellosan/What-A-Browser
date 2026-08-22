@@ -3,14 +3,6 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!--
-      Not a permission: `queries` is how an app is allowed to *see* that another
-      one is installed on Android 11 and later. Only Orbot, and only so the Tor
-      window can say "start Orbot" instead of "something went wrong".
-    -->
-    <queries>
-        <package android:name="org.torproject.android" />
-    </queries>
 
     <!--
       Not requested, deliberately: location, camera, microphone, contacts,
@@ -68,6 +60,24 @@
             android:process=":cat"
             android:taskAffinity="com.whatabrowser.wat.webview.cat"
             android:windowSoftInputMode="adjustResize" />
+
+        <!--
+          androidx.startup, in the Tor window's process. Its own provider runs in
+          the main process only, and the Tor window is deliberately not that
+          process — see TorStartupProvider for why this exists at all. The
+          metadata is repeated here so that discovery finds it whether a future
+          version of androidx.startup reads this provider's entry or the base
+          one's.
+        -->
+        <provider
+            android:name=".TorStartupProvider"
+            android:authorities="${applicationId}.tor-startup"
+            android:exported="false"
+            android:process=":lion">
+            <meta-data
+                android:name="io.matthewnelson.kmp.tor.resource.compilation.lib.tor.KmpTorResourceInitializer"
+                android:value="androidx.startup" />
+        </provider>
 
         <activity
             android:name=".LionBrowserActivity"

@@ -1,0 +1,301 @@
+name: Android release
+
+# Publishes the WebView browser's APKs. Three ways in:
+#
+#   - push the tag `Android-v0.1.6`
+#   - push a branch `release/Android-v0.1.6`, for anyone whose credentials can
+#     write branches but not tags — the release then creates the tag itself, at
+#     the commit that was built
+#   - run it by hand with a version named, or with none for a dry run that builds
+#     and checks everything and publishes nothing
+#
+# Whichever way in, the version named has to match the one in the app, and every
+# APK goes through `verify-apk.sh` first — a release is the one artifact nobody
+# re-checks by hand, so a bad build must not be able to become one.
+on:
+  push:
+    tags: ["Android-v*"]
+    branches: ["release/Android-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish as, or blank for a dry run"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build, check and sign
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+
+      # The tag names a version; the APK reports one. A release whose file says
+      # something different from its title is a support problem forever.
+      - name: Work out what is being published
+        id: version
+        run: |
+          case "$GITHUB_REF" in
+              refs/tags/*)           tag="${GITHUB_REF#refs/tags/}" ;;
+              refs/heads/release/*)  tag="${GITHUB_REF#refs/heads/release/}" ;;
+              *)                     tag="${{ inputs.tag }}" ;;
+          esac
+          declared=$(grep -oE 'versionName = "[^"]+"' android-webview/app/build.gradle.kts | cut -d'"' -f2)
+          echo "declared version: $declared"
+          echo "publishing as:    ${tag:-(dry run)}"
+
+          if [ -n "$tag" ] && [ "$tag" != "Android-v$declared" ]; then
+              echo "::error::$tag does not match the app's version (Android-v$declared)" >&2
+              exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$declared" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$declared" >> "$GITHUB_ENV"
+
+      # Runs the unit tests first, then builds one APK per architecture plus a
+      # universal one.
+      - name: Build
+        run: ./android-webview/build.sh release
+
+      - name: Check what is in them
+        run: |
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              ./android-webview/verify-apk.sh "$apk"
+          done
+
+      # Which of the four signing secrets this run can actually see.
+      #
+      # Names only, never values — a secret's value would be masked in the log
+      # anyway, and there is no reason to go near one. This exists because the
+      # failure it catches is silent: a secret added under a slightly different
+      # name means the release is published unsigned and nothing says why.
+      - name: Look for a signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          present=0
+          missing=""
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+              if [ -n "${!name:-}" ]; then
+                  echo "  $name: present"
+                  present=$((present + 1))
+              else
+                  echo "  $name: ABSENT"
+                  missing="$missing $name"
+              fi
+          done
+
+          # Second best, for a repository whose owner cannot add secrets: a
+          # keystore committed to the repository itself, with its password beside
+          # it. That key is public by construction — see signing/README.md for
+          # what that does and does not buy — but it is *stable*, so every
+          # release installs over the last, which unsigned APKs cannot do.
+          if [ "$present" -eq 0 ] && [ -f signing/release.jks ] && [ -f signing/release.properties ]; then
+              echo "  a committed keystore at signing/release.jks"
+              # shellcheck disable=SC1091
+              . ./signing/release.properties
+              {
+                  echo "SIGNING=yes"
+                  echo "SIGNING_KIND=committed"
+                  echo "KEYSTORE_FILE=signing/release.jks"
+                  echo "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+                  echo "KEY_ALIAS=$KEY_ALIAS"
+                  echo "KEY_PASSWORD=$KEY_PASSWORD"
+              } >> "$GITHUB_ENV"
+              exit 0
+          fi
+
+          if [ "$present" -eq 4 ]; then
+              echo "SIGNING=yes" >> "$GITHUB_ENV"
+              echo "SIGNING_KIND=secret" >> "$GITHUB_ENV"
+          elif [ "$present" -eq 0 ]; then
+              echo "No signing key is configured; the APKs will be published unsigned."
+              echo "SIGNING=no" >> "$GITHUB_ENV"
+          else
+              # Half a configuration is a typo in a secret's name, not a choice.
+              # Publishing unsigned APKs to a release someone meant to sign is
+              # worse than not publishing.
+              echo "::error::signing is half-configured — missing:$missing" >&2
+              exit 1
+          fi
+
+      # Signed with the project's key when the repository has one, so that a
+      # release can be installed over the last. Without it the APKs are
+      # published unsigned and the notes say so, because an APK signed with a
+      # throwaway key made on a CI runner cannot be upgraded either — it would
+      # only look installable.
+      - name: Sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          mkdir -p release
+          tools=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -type d | sort -V | tail -1)
+
+          if [ "$SIGNING" = yes ] && [ "${SIGNING_KIND:-}" = secret ]; then
+              echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+              # A keystore that did not decode is a mangled secret — usually
+              # `base64` without `-w0`, pasted with the line breaks lost.
+              test -s "$RUNNER_TEMP/keystore.jks" || {
+                  echo "::error::ANDROID_KEYSTORE_BASE64 did not decode to anything" >&2
+                  exit 1
+              }
+              keystore="$RUNNER_TEMP/keystore.jks"
+          elif [ "$SIGNING" = yes ]; then
+              keystore="$KEYSTORE_FILE"
+          fi
+
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              abi=$(basename "$apk" | sed -E 's/^app-(.*)-release-unsigned\.apk$/\1/')
+              out="release/WAT-Android-v${VERSION}-${abi}.apk"
+              "$tools/zipalign" -p -f 4 "$apk" "$out"
+              if [ "$SIGNING" = yes ]; then
+                  "$tools/apksigner" sign \
+                      --ks "$keystore" \
+                      --ks-pass env:KEYSTORE_PASSWORD \
+                      --ks-key-alias "$KEY_ALIAS" \
+                      --key-pass env:KEY_PASSWORD \
+                      "$out"
+              fi
+          done
+          rm -f "$RUNNER_TEMP/keystore.jks"
+
+          # The certificate this run signed with, once. Its fingerprint is how
+          # you tell that a release was signed with the key you meant — and that
+          # the next one will install over it.
+          if [ "$SIGNING" = yes ]; then
+              "$tools/apksigner" verify --print-certs "release/WAT-Android-v${VERSION}-universal.apk" \
+                  | grep -iE "signer #1 (certificate DN|certificate SHA-256)"
+          else
+              # Without a key, the release APKs above cannot be installed at all.
+              # A debug-signed build can, so one is included to make the release
+              # useful today — clearly named, because it is signed with a key
+              # this runner made and threw away, so the next release cannot
+              # install over it.
+              ./android-webview/gradlew --project-dir android-webview --no-daemon assembleDebug
+              cp android-webview/app/build/outputs/apk/debug/app-universal-debug.apk \
+                 "release/WAT-Android-v${VERSION}-universal-debug-signed.apk"
+          fi
+
+          cd release
+          sha256sum ./*.apk > SHA256SUMS
+          ls -lh
+
+      # What this version added, from the file in the repository rather than
+      # from this workflow. Notes kept in a workflow are notes nobody edits
+      # while changing the app: 0.1.7 was published describing 0.1.2. A version
+      # with no section here does not get released.
+      - name: Take this version's notes from the repository
+        run: |
+          mkdir -p release
+          awk -v want="## $VERSION" '
+              $0 == want { copying = 1; next }
+              /^## / { copying = 0 }
+              copying { print }
+          ' android-webview/RELEASE_NOTES.md \
+              | sed -e '/./,$!d' > release/WHATS-IN-IT.md
+
+          if [ ! -s release/WHATS-IN-IT.md ]; then
+              echo "::error::android-webview/RELEASE_NOTES.md has no '## $VERSION' section" >&2
+              exit 1
+          fi
+          cat release/WHATS-IN-IT.md
+
+      # Written here rather than in the release step so the notes can say what
+      # actually happened in this run — signed or not, and with what in it.
+      - name: Write the release notes
+        run: |
+          {
+            echo "WAT ${VERSION} for Android: the browser on Android's system WebView, with WAT's interface around it."
+            echo
+            echo "### Installing"
+            echo
+            echo "Take the APK for your phone's architecture, or \`universal\` if you are not sure — it carries all four and is larger for it. Most phones since 2017 are \`arm64-v8a\`."
+            echo
+            if [ "$SIGNING" = yes ] && [ "${SIGNING_KIND:-}" = committed ]; then
+              echo "The APKs are signed with the repository's own key, so this release installs over the last one. That key is committed to the repository and therefore public: it makes updates work, and it is not proof of who built the file. Check \`SHA256SUMS\` against the build log if that matters to you."
+            elif [ "$SIGNING" = yes ]; then
+              echo "The APKs are signed with the project's release key, so this one installs over the last."
+            else
+              echo "**The per-architecture APKs are unsigned**, because no signing key is configured for this repository, and Android will not install an unsigned APK. Either take \`universal-debug-signed\`, which installs as it is — uninstall any earlier build first, since it is signed with a throwaway key — or sign one yourself:"
+              echo
+              echo '```sh'
+              echo "apksigner sign --ks my-release-key.jks WAT-Android-v${VERSION}-arm64-v8a.apk"
+              echo '```'
+              echo
+              echo "To have releases arrive signed, add \`ANDROID_KEYSTORE_BASE64\` (\`base64 -w0 my-release-key.jks\`), \`ANDROID_KEYSTORE_PASSWORD\`, \`ANDROID_KEY_ALIAS\` and \`ANDROID_KEY_PASSWORD\` to the repository's secrets. Use the same key every time or the next release cannot be installed over this one."
+            fi
+            echo
+            echo "\`SHA256SUMS\` has the checksums."
+            echo
+            echo "### What is in it"
+            echo
+            cat release/WHATS-IN-IT.md
+            echo
+            echo "Two private modes throughout: **hiding cat**, which writes nothing down, and **hiding lion**, which is hiding cat with every request through Tor — carried in the app, with nothing else to install. Each runs in its own process, because Android's WebView keeps one cookie jar per process. The Tor window is **not the Tor Browser**: it hides where you are connecting from, not who is connecting. It says so before the first page, and refuses to open until check.torproject.org has confirmed it is going through Tor."
+            echo
+            echo "### Checked before publishing"
+            echo
+            echo "Every APK here passed \`verify-apk.sh\`: one permission (\`INTERNET\`) and no others, cleartext refused, a separate process for each private window, and a tor library for every architecture it claims to support. The unit tests ran before the build."
+          } > release/NOTES.md
+          cat release/NOTES.md
+
+      - name: Tidy up
+        run: rm -f release/WHATS-IN-IT.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    # A run with no version named builds and checks everything and publishes
+    # nothing.
+    if: needs.build.outputs.tag != ''
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: release
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          # The tag may not exist yet — a branch push creates it here. Without
+          # this it would be created against the default branch rather than
+          # against the commit that was actually built and checked.
+          target_commitish: ${{ github.sha }}
+          # The version, not the tag: the tag already says Android, and
+          # "WAT Android-v0.1.6 for Android" is how the first one came out.
+          name: WAT ${{ needs.build.outputs.version }} for Android
+          body_path: release/NOTES.md
+          # The Tor window was confirmed working on a phone at 0.2.0 — Android
+          # 10, hiding lion, reaching DuckDuckGo's onion address, which is a
+          # thing that cannot resolve at all outside Tor. That was the one
+          # condition on the pre-release flag, so it comes off.
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release/*.apk
+            release/SHA256SUMS

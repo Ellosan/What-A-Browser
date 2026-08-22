@@ -135,6 +135,80 @@ fn main() {
     time("to_argb32 (present copy)", 50, || canvas.to_argb32());
 
     // The whole browser, at the sizes people actually use.
+    // The same frame with the glass switched off, which is the only way to say
+    // how much of a real page's cost is the theme and how much is the page.
+    println!("\nreal home page, by theme:");
+    for theme in ["liquid-glass", "flat"] {
+        let mut browser = wat_shell::Browser::new(&wat_shell::ShellConfig {
+            offline: true,
+            size: Size2D::new(1280.0, 800.0),
+            theme: theme.to_string(),
+            ..Default::default()
+        })
+        .expect("the offline browser starts");
+        let mut window = Canvas::new(1280, 800);
+        let ms = time(&format!("1280x800 {theme}"), 10, || {
+            browser.render_into(&mut window)
+        });
+        println!("      {:.1} fps", 1000.0 / ms);
+    }
+
+    // Where a real page's frame actually goes, by primitive. The synthetic
+    // frame above has a page of six items in it; the home page is the thing
+    // anyone actually looks at, and it is the one that costs 120 ms.
+    {
+        use std::collections::BTreeMap;
+        let home_fonts = Rc::new(FontStore::new());
+        let home_theme = Theme::default().resolve(false);
+        let mut home = Session::new(home_fonts.clone(), home_theme.clone(), size, true);
+        home.open_tab("about:home", &wat_net::StaticLoader::new());
+        let mut home_chrome = Chrome::new(home_theme, size);
+        home_chrome.relayout(home.tab_count());
+
+        let renderer = Renderer::new(&home_fonts);
+        let mut window = Canvas::new(width as u32, height as u32);
+        let mut totals: BTreeMap<&str, (f64, usize, f64)> = BTreeMap::new();
+
+        for list in [
+            window_display_list(&home_chrome, &home),
+            home_chrome.build(&home_fonts, &home),
+        ] {
+            for item in &list.items {
+                let area = match item {
+                    DisplayItem::Fill { shape, .. }
+                    | DisplayItem::Gradient { shape, .. }
+                    | DisplayItem::Border { shape, .. }
+                    | DisplayItem::Shadow { shape, .. }
+                    | DisplayItem::BackdropFilter { shape, .. }
+                    | DisplayItem::Image { shape, .. } => {
+                        (shape.rect.width * shape.rect.height) as f64
+                    }
+                    _ => 0.0,
+                };
+                let one = DisplayList {
+                    items: vec![item.clone()],
+                };
+                let start = Instant::now();
+                renderer.render(&one, &mut window);
+                let ms = start.elapsed().as_secs_f64() * 1000.0;
+                let entry = totals.entry(kind_of(item)).or_insert((0.0, 0, 0.0));
+                entry.0 += ms;
+                entry.1 += 1;
+                entry.2 += area;
+            }
+        }
+
+        println!("\nthe home page frame, by primitive:");
+        let mut rows: Vec<_> = totals.into_iter().collect();
+        rows.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+        for (kind, (ms, count, area)) in rows {
+            println!(
+                "  {kind:<16} {count:>4} items {ms:>8.1} ms   {:>7.2} Mpx",
+                area / 1_000_000.0
+            );
+        }
+    }
+
     println!("\nfull frames, real home page:");
     for (w, h) in [(1280.0f32, 800.0f32), (1920.0, 1080.0), (2560.0, 1440.0)] {
         let mut browser = wat_shell::Browser::new(&wat_shell::ShellConfig {

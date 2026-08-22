@@ -42,10 +42,27 @@ class Backdrop(
 
     private val refresh = Runnable { captureNow() }
 
-    /** Captures after things have settled, coalescing a burst into one. */
+    private var lastCapture = 0L
+
+    /**
+     * Asks for a new backdrop.
+     *
+     * Throttled rather than merely debounced, which is the difference between
+     * glass that catches up when a scroll stops and glass that keeps up while it
+     * happens: a capture runs at most every [MIN_GAP_MS], and a final one is
+     * always scheduled for after the movement ends so the last frame is right.
+     */
     fun refreshSoon(delayMs: Long = SETTLE_MS) {
         if (!enabled) return
+        val since = SystemClock.elapsedRealtime() - lastCapture
         handler.removeCallbacks(refresh)
+        if (since >= MIN_GAP_MS && delayMs >= SETTLE_MS) {
+            // Mid-scroll, and it has been long enough: draw now, and again when
+            // things settle.
+            captureNow()
+            handler.postDelayed(refresh, SETTLE_MS)
+            return
+        }
         handler.postDelayed(refresh, delayMs)
     }
 
@@ -56,6 +73,7 @@ class Backdrop(
     private fun captureNow() {
         if (!enabled || content.width == 0 || content.height == 0) return
         val started = SystemClock.elapsedRealtime()
+        lastCapture = started
 
         for (bar in bars) {
             if (bar.visibility != View.VISIBLE || bar.width == 0 || bar.height == 0) continue
@@ -101,6 +119,9 @@ class Backdrop(
             bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
             Blur.saturate(pixels, VIBRANCY)
             Blur.blur(pixels, width, height, RADIUS)
+            // After the blur, not before: bending an image and then averaging it
+            // smears the bend away again.
+            Lens.refract(pixels, width, height, LENS_DEPTH)
             bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
             bitmap
         } catch (_: Throwable) {
@@ -121,6 +142,12 @@ class Backdrop(
 
         /** Long enough that a fling has finished, short enough to feel attached. */
         const val SETTLE_MS = 140L
+
+        /** The fastest the backdrop is redrawn during a scroll: about 8 a second. */
+        const val MIN_GAP_MS = 120L
+
+        /** How far the edge bend reaches, in pixels of the downscaled capture. */
+        const val LENS_DEPTH = 5
 
         /** Half a frame at 60Hz. Past this, the blur is costing more than it gives. */
         const val BUDGET_MS = 8L

@@ -20,7 +20,12 @@ esac
 task=$([ "$profile" = release ] && echo assembleRelease || echo assembleDebug)
 "$here/gradlew" --project-dir "$here" --no-daemon test "$task"
 
-apk=$(find "$here/app/build/outputs/apk/$profile" -name '*.apk' | head -1)
-test -n "$apk" || { echo "no $profile APK was produced" >&2; exit 1; }
-echo "==> $apk"
-ls -lh "$apk"
+# One APK per architecture, because the bundled tor is 8-9 MB of native code
+# and nobody should download four copies of it. The universal one carries all
+# four, for anyone who would rather have a single file.
+mapfile -t apks < <(find "$here/app/build/outputs/apk/$profile" -name '*.apk' | sort)
+test "${#apks[@]}" -gt 0 || { echo "no $profile APK was produced" >&2; exit 1; }
+echo "==> ${#apks[@]} APKs"
+for apk in "${apks[@]}"; do
+    printf '%8s  %s\n' "$(du -h "$apk" | cut -f1)" "$(basename "$apk")"
+done

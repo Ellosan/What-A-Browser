@@ -23,9 +23,10 @@ object SecureWebView {
     fun configure(webView: WebView, debuggable: Boolean) {
         val settings = webView.settings
 
-        // A browser without JavaScript is not a browser. This is the one
-        // dangerous default that has to stay on, which is why everything that
-        // limits its reach below matters so much.
+        // A browser without JavaScript is not a browser, so this is on unless
+        // someone turns it off in settings — which [apply] does, after this. It
+        // is the one dangerous default that has to stay, which is why everything
+        // that limits its reach below matters so much.
         settings.javaScriptEnabled = true
 
         // --- what a page must never be able to touch ---------------------
@@ -76,11 +77,6 @@ object SecureWebView {
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
 
-        // Google's malware and phishing list. Backported by androidx.webkit to
-        // devices whose framework does not have it.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) {
-            WebSettingsCompat.setSafeBrowsingEnabled(settings, true)
-        }
 
         // Ask sites not to profile, for whatever it is worth, and switch off the
         // Topics/attribution surface where the platform lets us.
@@ -91,11 +87,10 @@ object SecureWebView {
             )
         }
 
-        // Third-party cookies are the tracking mechanism and a CSRF ingredient.
-        // First-party ones stay: sites stop working without them.
-        val cookies = CookieManager.getInstance()
-        cookies.setAcceptCookie(true)
-        cookies.setAcceptThirdPartyCookies(webView, false)
+        // Third-party cookies are the tracking mechanism and a CSRF ingredient,
+        // and they are off here rather than in [apply] because there is no
+        // setting for them: they stay off. First-party ones are a preference.
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
 
         // Remote debugging is an open door to every page in the browser for
         // anything that can reach the device over ADB. Debug builds only.
@@ -105,5 +100,52 @@ object SecureWebView {
         // web content into this app at all. It is the single most reliable way to
         // turn a WebView into remote code execution, and a browser has no reason
         // to expose one.
+    }
+
+    /**
+     * The parts a reader is allowed to change, applied to a view that has already
+     * been [configure]d.
+     *
+     * Separate because these are re-applied whenever the settings screen closes,
+     * while everything in `configure` is applied once and never revisited — the
+     * split is exactly the line between "a preference" and "what makes this
+     * browser safe". Nothing in here can weaken the boundaries above: the worst
+     * it can do is stop the browser from running scripts.
+     */
+    fun apply(webView: WebView, preferences: Settings) {
+        val settings = webView.settings
+
+        settings.javaScriptEnabled = preferences.javaScript
+        settings.loadsImagesAutomatically = preferences.images
+        settings.blockNetworkImage = !preferences.images
+        settings.textZoom = preferences.textZoom
+
+        // Pinch to zoom. Chrome's "force enable zoom" overrides a page that asks
+        // not to be zoomed; a WebView has no API for that, so what this can do is
+        // keep the gesture available and never show the old on-screen buttons.
+        settings.setSupportZoom(preferences.forceZoom)
+        settings.builtInZoomControls = preferences.forceZoom
+        settings.displayZoomControls = false
+
+        // Google's malware and phishing list. On by default, and a setting
+        // because it does mean the engine asks Google about a partial hash of
+        // each address, which somebody may weigh differently than I would.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) {
+            WebSettingsCompat.setSafeBrowsingEnabled(settings, preferences.safeBrowsing)
+        }
+
+        // Chrome's "dark theme for sites": the engine inverts pages that have no
+        // dark mode of their own, and leaves alone the ones that do.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, preferences.darkenSites)
+        }
+
+        val cookies = CookieManager.getInstance()
+        // First-party cookies are a preference — refusing them signs you out of
+        // everything, which is why Chrome buries the option and this defaults to
+        // accepting them. Third-party cookies are not a preference.
+        cookies.setAcceptCookie(!preferences.blockAllCookies)
+        cookies.setAcceptThirdPartyCookies(webView, false)
+
     }
 }

@@ -15,7 +15,7 @@ from it, not a port.
 to treat those as CSS pixels, which drew the entire interface at a third of its
 intended size. Now the chrome and the page lay out in CSS pixels and the
 finished display list is scaled at the last moment, so text is rasterized at the
-size it is actually drawn rather than magnified. `wat shot --scale 3` does the
+size it is actually drawn rather than magnified. The `boot_bench` example does the
 same thing headlessly, which is how it is checked.
 
 **Touch.** A finger is not a mouse: it has no hover, and whether it is a tap or

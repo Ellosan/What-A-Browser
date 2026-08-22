@@ -20,11 +20,12 @@ engine in this repository:
 
 ![A page using backdrop-filter, rendered by the engine](docs/images/glass-demo.png)
 
-## Desktop and mobile from one codebase
+## Two layouts from one codebase
 
-The chrome has two layouts and picks between them by window width, so the same
-binary is a desktop browser and a phone browser. Resize a desktop window past
-640px and it becomes the touch layout.
+The chrome has a desktop layout and a touch layout and picks between them by
+width, so the same engine draws both. It is the Android app that ships it now —
+the desktop application was removed, and the PC browser is a Firefox fork; see
+below.
 
 | Desktop, dark | Mobile, dark |
 | --- | --- |
@@ -37,46 +38,26 @@ Rust 1.82 or newer is the only prerequisite.
 ```sh
 git clone https://github.com/ellosan/what-a-browser
 cd what-a-browser
-cargo run --release
+cargo test --workspace          # 827 tests, no network required
+cargo run --release --example frame_bench -p wat-shell
 ```
 
-That opens a window. Everything the window does is also available headlessly,
-which is handy over SSH and essential in CI:
+There is no `wat` binary any more. The engine is a set of libraries, and the
+things that used to be CLI commands are examples that render to PNG:
 
 ```sh
-# Render a whole browser window to a PNG
-cargo run --release -- shot https://example.com -o example.png
+# A window, and how long a frame takes at three sizes
+cargo run --release --example frame_bench -p wat-shell
 
-# Render only the page
-cargo run --release -- render https://example.com -o page.png
+# A cold start, phone-sized, with boot-preview.png and boot-full.png written out
+cargo run --release --example boot_bench -p wat-shell
 
-# The phone layout, dark
-cargo run --release -- shot https://example.com --mobile --dark -o phone.png
-
-# Inspect what the engine built
-cargo run --release -- dom   https://example.com
-cargo run --release -- boxes https://example.com --width 480
-cargo run --release -- style https://example.com h1
-
-# Themes
-cargo run --release -- theme list
-cargo run --release -- theme show liquid-glass > my-theme.toml
-cargo run --release -- shot about:home --theme my-theme.toml -o custom.png
+# The launcher icons, drawn with the browser's own rasterizer
+cargo run --release --example app_icon -p wat-paint -- android-webview/app/src/main/res
 ```
 
-`wat help` lists every command and option.
-
-### Keyboard
-
-| Keys | Action |
-| --- | --- |
-| `Ctrl/Cmd + L`, `/` | Focus the address bar |
-| `Ctrl/Cmd + T` / `W` | New tab / close tab |
-| `Ctrl/Cmd + R`, `F5` | Reload |
-| `Ctrl/Cmd + ←` / `→` | Back / forward |
-| `Ctrl/Cmd + 1…9` | Select a tab |
-| `Ctrl/Cmd + D` | Switch between light and dark |
-| `Space`, `PgUp/PgDn`, `Home/End` | Scroll |
+To run the browser, build one of the apps: `android/` for WAT's own engine,
+`android-webview/` for the everyday browser, `firefox/` for the PC fork.
 
 ## Fully customizable
 
@@ -221,39 +202,66 @@ Being clear about this matters more than the feature list:
 | `wat-net` | URLs, schemes, resource loading, caching |
 | `wat-engine` | The pipeline, tabs, history, internal pages |
 | `wat-theme` | The theme model and the bundled presets |
-| `wat-web` | The seam between the interface and a web engine |
 | `wat-ui` | The adaptive Liquid Glass chrome |
 | `wat-shell` | Window and event loop, desktop and Android entry points, touch |
-| `wat-cli` | The `wat` binary |
-| `wat-servo` | The same interface on Servo's engine (outside the workspace) |
 
 ```sh
 cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
 
+## The PC browser: a Firefox fork
+
+`firefox/` is where the desktop browser lives now. The one that used to be
+here — WAT's own engine in a winit window, driven by a `wat` binary — has been
+removed, and the PC story is a patched Firefox instead: Gecko and its sandbox,
+WAT's look, and none of the compatibility gap a from-scratch engine has on the
+real web.
+
+It is **scaffolding, not a build**: a version pin, the fetch/build/rebase
+scripts, a mozconfig with telemetry and crash reporting off, and an honest list
+of the patches that are not written yet. Same shape as `chromium/`, and the same
+warning applies — a fork's security is its rebase cadence and nothing else.
+
+Gecko has no embedding API, so a fork is the only thing "on Firefox" can mean.
+See [firefox/README.md](firefox/README.md).
+
 ## Android on the system WebView
 
 `android-webview/` is the third option: Chromium's engine through Android's
-system WebView, WAT's interface around it, and a **106 KB** APK. Google patches
+system WebView and WAT's interface around it. Google patches
 the engine through Play, so it cannot fall behind the way a fork can. No
 extensions, and no engine control.
 
-It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
-find in page, sharing, desktop sites, fullscreen video and settings — with only
-three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
-cannot afford sixteen.
+It is an everyday browser: tabs, bookmarks, history, file uploads, find in page,
+sharing, desktop sites, fullscreen video and a settings screen in Chrome's shape
+with more privacy in it than Chrome offers — tracker blocking on by default,
+refuse-all-cookies, clear-everything-on-exit. Downloads have a page of their own,
+live while they run, with open, share, retry and delete on each. Only three tabs
+hold a live `WebView` at a time, because a phone with 4 GB in it cannot afford
+sixteen.
+
+Userscripts stand in for extensions, since a WebView can host the second
+honestly and not the first. One ships with the browser and arrives switched off —
+[Adv-Microslop](https://greasyfork.org/en/scripts/585569-adv-microslop) by
+Ellosan, MIT — and a script's own settings open from **Script commands** in the
+menu, which is the browser reading back what the page registered through
+`GM_registerMenuCommand`.
 
 Private browsing comes in two: **hiding cat**, which writes nothing down, and
-**hiding lion**, which is hiding cat with every request through Tor and which
-refuses to open until `check.torproject.org` has confirmed it. Each runs in a
-process of its own, because Android's WebView keeps one cookie jar per process
-and that is the only thing that makes a private window actually separate. The
-Tor window is not the Tor Browser and says so before the first page.
+**hiding lion**, which is hiding cat with every request through Tor. Tor is
+carried in the app the way desktop Brave carries it — nothing else to install —
+and the window refuses to open until `check.torproject.org` has confirmed, through
+that same proxied WebView, that Tor is what it sees. Each runs in a process of its
+own, because Android's WebView keeps one cookie jar per process and that is the
+only thing that makes a private window actually separate. The Tor window is not
+the Tor Browser and says so before the first page.
 
-The glass is real glass as of 0.1.2: the strip of page behind each bar is
-captured at an eighth scale, blurred, and drawn as the bar's backdrop, under a
-sheen, a lit lower edge and a rim that fades around the sides. See
+The glass is real glass: the strip of page behind each bar is captured at an
+eighth scale, blurred, bent inward at the edges the way a thick pane refracts,
+and drawn as the bar's backdrop — with a specular highlight that slides as the
+phone tilts, and a brightening where a finger lands. The launcher icon is drawn
+by `wat-paint`, the same rasterizer that draws the browser. See
 [docs/WEBVIEW.md](docs/WEBVIEW.md) for what is hardened, what Android cannot do,
 and why.
 

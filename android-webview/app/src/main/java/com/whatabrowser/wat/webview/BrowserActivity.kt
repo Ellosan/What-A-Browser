@@ -4,10 +4,14 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.text.TextUtils
 import android.view.KeyEvent
@@ -66,6 +70,14 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     private var backdrop: Backdrop? = null
 
+    /**
+     * The accelerometer, which moves the highlight on the glass.
+     *
+     * Registered only while the window is in front. A sensor left listening is a
+     * battery complaint nobody can trace back to a highlight.
+     */
+    private var tilt: Tilt? = null
+
     private lateinit var address: AutoCompleteTextView
     private lateinit var lock: TextView
     private lateinit var progress: ProgressBar
@@ -81,6 +93,33 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     private var pendingFiles: ValueCallback<Array<Uri>>? = null
 
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+
+    /** See [applyPrivacy]: set on the first page, not on the empty window. */
+    private var screenshotsBlocked = false
+
+    /**
+     * Applies the theme setting.
+     *
+     * A plain `Activity` has no `AppCompatDelegate.setDefaultNightMode`, so the
+     * night bit is set on the configuration this window is built from. It has to
+     * happen here, before any resource is read, which is why choosing a theme in
+     * settings restarts the window.
+     */
+    override fun attachBaseContext(base: Context) {
+        val choice = Settings(base).theme
+        if (choice == Settings.ThemeChoice.SYSTEM) {
+            super.attachBaseContext(base)
+            return
+        }
+        val configuration = Configuration(base.resources.configuration)
+        configuration.uiMode = (configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+            if (choice == Settings.ThemeChoice.DARK) {
+                Configuration.UI_MODE_NIGHT_YES
+            } else {
+                Configuration.UI_MODE_NIGHT_NO
+            }
+        super.attachBaseContext(base.createConfigurationContext(configuration))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,11 +177,12 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     private fun applyPrivacy() {
         if (!privacy.isPrivate) return
 
-        // Keeps the window out of screenshots and out of the thumbnail the
-        // system puts in recents — a private window that is legible in the task
-        // switcher is private only until someone else picks up the phone.
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-
+        // `FLAG_SECURE` is applied when the first page loads, not here. It keeps
+        // a private window out of screenshots and out of the recents thumbnail,
+        // which is right — but in 0.1.3 it also made the Tor window's own error
+        // message impossible to screenshot, and an error nobody can get off the
+        // phone is an error nobody can act on. Before a page has loaded there is
+        // nothing private on screen to protect.
         modeBadge.visibility = View.VISIBLE
         modeBadge.text = getString(
             if (privacy.usesTor) R.string.lion_glyph else R.string.cat_glyph,
@@ -152,79 +192,28 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         )
     }
 
+    /**
+     * Blocks screen capture from the moment a private window has a page in it.
+     *
+     * Deliberately not before: the gate and its failures are the one thing in a
+     * private window worth being able to photograph, and they contain nothing
+     * about what anyone was reading.
+     */
+    private fun blockScreenshotsOnce(url: String) {
+        if (screenshotsBlocked || !privacy.isPrivate) return
+        if (UrlResolver.decide(url) != UrlResolver.Decision.RENDER) return
+        screenshotsBlocked = true
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE,
+        )
+    }
+
     private fun showPrivateNotice() {
         AlertDialog.Builder(this)
             .setTitle(if (privacy.usesTor) R.string.private_lion else R.string.private_cat)
             .setMessage(R.string.private_notice)
             .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
-
-    // --- Tor -----------------------------------------------------------------
-
-    /**
-     * Puts the window behind Tor before it is allowed to load anything.
-     *
-     * The order matters and is the whole point: route first, then check through
-     * the routed stack, and only then open a page. If any step fails the window
-     * closes rather than falling back to the ordinary network — which is what
-     * "fails closed" has to mean for this to be worth offering at all.
-     */
-    private fun openThroughTor(firstPage: String?) {
-        if (!TorGate.isSupported()) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.tor_failed_title)
-                .setMessage(R.string.tor_unsupported)
-                .setCancelable(false)
-                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
-                .show()
-            return
-        }
-
-        val waiting = AlertDialog.Builder(this)
-            .setTitle(R.string.tor_connecting)
-            .setMessage(R.string.tor_notice)
-            .setCancelable(false)
-            .create()
-        waiting.show()
-
-        TorGate.route {
-            // A WebView of its own, never attached to the window: the check must
-            // go through the same proxied stack the browsing will use, and it
-            // must not leave a page behind in a tab.
-            val probe = WebView(this)
-            SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
-            TorGate.verify(probe) { throughTor ->
-                probe.destroy()
-                waiting.dismiss()
-                if (throughTor) {
-                    Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
-                    firstPage?.let(tabs::open)
-                } else {
-                    showTorFailure(firstPage)
-                }
-            }
-        }
-    }
-
-    private fun showTorFailure(firstPage: String?) {
-        val detail = if (TorGate.orbotInstalled(this)) {
-            getString(R.string.tor_failed, TorGate.PROXY)
-        } else {
-            getString(R.string.tor_no_orbot) + "\n\n" + getString(R.string.tor_failed, TorGate.PROXY)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.tor_failed_title)
-            .setMessage(detail)
-            .setCancelable(false)
-            .setPositiveButton(R.string.tor_try_again) { _, _ -> openThroughTor(firstPage) }
-            .setNeutralButton(R.string.tor_start_orbot) { _, _ ->
-                TorGate.startOrbot(this)
-                // Orbot takes a moment to build a circuit, so the reader comes
-                // back and taps try again rather than this guessing when.
-                showTorFailure(firstPage)
-            }
-            .setNegativeButton(R.string.close_private) { _, _ -> finish() }
             .show()
     }
 
@@ -245,8 +234,10 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         findViewById<View>(R.id.menu).setOnClickListener(::showMenu)
 
         // A private window suggests nothing, because it can see nothing: there
-        // is no store behind it to suggest from.
-        store?.takeIf { privacy.suggestsFromHistory }?.let { address.setAdapter(SuggestionAdapter(this, it)) }
+        // is no store behind it to suggest from. Nor does an ordinary one, if
+        // the reader would rather it did not.
+        store?.takeIf { privacy.suggestsFromHistory && settings.suggestFromHistory }
+            ?.let { address.setAdapter(SuggestionAdapter(this, it)) }
         address.setOnItemClickListener { parent, _, position, _ ->
             (parent.getItemAtPosition(position) as? BrowserStore.Entry)?.let {
                 address.clearFocus()
@@ -275,10 +266,17 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         findViewById<View>(R.id.find_previous).setOnClickListener { tabs.findNext(false) }
         findViewById<View>(R.id.find_close).setOnClickListener { hideFind() }
 
-        backdrop = Backdrop(
-            findViewById(R.id.pages),
-            listOf(findViewById(R.id.top_bar), findViewById(R.id.bottom_bar), findBar),
+        val bars = listOf<GlassBar>(
+            findViewById(R.id.top_bar),
+            findViewById(R.id.bottom_bar),
+            findBar,
         )
+        backdrop = Backdrop(findViewById(R.id.pages), bars)
+        tilt = Tilt(this) { x, _ ->
+            // Leaning right moves the light left, the way a highlight on a real
+            // surface does.
+            for (bar in bars) bar.light = -x
+        }
     }
 
     /**
@@ -348,22 +346,34 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     override fun onPause() {
         super.onPause()
         tabs.onPause()
+        tilt?.stop()
     }
 
     override fun onResume() {
         super.onResume()
         tabs.onResume()
+        tilt?.start()
+        backdrop?.refreshSoon()
     }
 
     override fun onDestroy() {
         // A WebView outlives its activity if it is left attached, and takes the
         // whole view tree with it.
         backdrop?.stop()
+        tilt?.stop()
         tabs.destroy()
         val closing = isFinishing
         super.onDestroy()
 
+        if (closing && !privacy.isPrivate && settings.clearOnExit) {
+            // Everything a private window would have thrown away, for someone who
+            // wants that from the ordinary one too.
+            SettingsPanel.clearEverything(store)
+        }
+
         if (closing && privacy.isPrivate) {
+            // Tor goes with the window it was started for.
+            if (privacy.usesTor) TorGate.stop()
             PrivateStorage.clearSession(privacy)
             // The process goes with the window. Its data directory is deleted
             // when a private window next starts — deleting it now, with a
@@ -535,6 +545,150 @@ open class BrowserActivity : Activity(), Tabs.Listener {
         return true
     }
 
+    // --- Tor -----------------------------------------------------------------
+
+    /**
+     * Puts the window behind Tor before it is allowed to load anything.
+     *
+     * The order matters and is the whole point: start tor, route through it,
+     * check through the routed stack, and only then open a page. If any step
+     * fails the window closes rather than falling back to the ordinary network —
+     * which is what "fails closed" has to mean for this to be worth offering.
+     */
+    private fun openThroughTor(firstPage: String?) {
+        if (!TorGate.isSupported()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.tor_failed_title)
+                .setMessage(R.string.tor_unsupported)
+                .setCancelable(false)
+                .setPositiveButton(android.R.string.ok) { _, _ -> finish() }
+                .show()
+            return
+        }
+
+        val waiting = AlertDialog.Builder(this)
+            .setTitle(R.string.tor_connecting)
+            .setMessage(getString(R.string.tor_bootstrap, 0) + "\n\n" + getString(R.string.tor_notice))
+            .setCancelable(false)
+            .create()
+        waiting.show()
+
+        // Nothing here has a deadline of its own: tor can bootstrap for as long
+        // as it likes, and a window stuck on "building a circuit" with no way
+        // forward is the failure that looks most like the app being broken.
+        val handler = Handler(Looper.getMainLooper())
+        var settled = false
+        var progress = 0
+        val giveUp = Runnable {
+            if (settled) return@Runnable
+            settled = true
+            waiting.dismiss()
+            showTorFailure(
+                firstPage,
+                getString(R.string.tor_slow, GATE_TIMEOUT_MS / 1000, progress),
+            )
+        }
+        handler.postDelayed(giveUp, GATE_TIMEOUT_MS)
+
+        TorGate.start(this) { state ->
+            // States keep arriving after the gate has resolved — tor goes on
+            // logging — and acting on them twice would put a second probe
+            // WebView behind a dialog that is no longer there.
+            if (settled) return@start
+            when (state) {
+                is TorEngine.State.Starting -> {
+                    progress = state.percent
+                    waiting.setMessage(
+                        getString(R.string.tor_bootstrap, state.percent) + "\n\n" +
+                            getString(R.string.tor_notice),
+                    )
+                }
+
+                is TorEngine.State.Ready -> {
+                    settled = true
+                    handler.removeCallbacks(giveUp)
+                    TorGate.route(state.proxy) {
+                        // A WebView of its own, never attached to the window: the
+                        // check must go through the same proxied stack the
+                        // browsing will use, and it must not leave a page behind
+                        // in a tab.
+                        val probe = WebView(this)
+                        SecureWebView.configure(probe, debuggable = BuildConfig.DEBUG)
+                        TorGate.verify(probe) { throughTor ->
+                            probe.destroy()
+                            waiting.dismiss()
+                            if (throughTor) {
+                                Toast.makeText(this, R.string.tor_verified, Toast.LENGTH_SHORT).show()
+                                firstPage?.let(tabs::open)
+                            } else {
+                                showTorFailure(firstPage, getString(R.string.tor_check_failed))
+                            }
+                        }
+                    }
+                }
+
+                is TorEngine.State.Failed -> {
+                    settled = true
+                    handler.removeCallbacks(giveUp)
+                    waiting.dismiss()
+                    showTorFailure(firstPage, state.reason)
+                }
+            }
+        }
+    }
+
+    /**
+     * What a failed Tor window says, and how to get it out of the phone.
+     *
+     * The details button is the point. This window blocks screenshots the moment
+     * it has a page in it, it runs in its own process, and the interesting part
+     * of the failure is usually in a layer that leaves no visible trace — so the
+     * report is offered as text to copy or share rather than as something to
+     * photograph.
+     */
+    private fun showTorFailure(firstPage: String?, reason: String) {
+        val details = TorEngine.diagnostics(this, reason)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.tor_failed_title)
+            .setMessage(getString(R.string.tor_failed, reason))
+            .setCancelable(false)
+            .setPositiveButton(R.string.tor_try_again) { _, _ ->
+                TorGate.stop()
+                openThroughTor(firstPage)
+            }
+            .setNeutralButton(R.string.tor_details) { _, _ ->
+                showTorDetails(firstPage, details)
+            }
+            .setNegativeButton(R.string.close_private) { _, _ -> finish() }
+            .show()
+    }
+
+    private fun showTorDetails(firstPage: String?, details: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.tor_details)
+            .setMessage(details)
+            .setCancelable(false)
+            .setPositiveButton(R.string.copy_details) { _, _ ->
+                copy(details)
+                showTorFailure(firstPage, getString(R.string.tor_details_copied))
+            }
+            .setNeutralButton(R.string.share) { _, _ ->
+                startActivity(
+                    Intent.createChooser(
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, details)
+                        },
+                        getString(R.string.share),
+                    ),
+                )
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                showTorFailure(firstPage, details.substringAfter("reason: ").substringBefore('\n'))
+            }
+            .show()
+    }
+
     // --- the panels ---------------------------------------------------------
 
     /**
@@ -554,7 +708,7 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
         val ids = mutableListOf<String>()
         for (id in layout.visible()) {
-            if (!MenuCatalog.appliesTo(id, privacy)) continue
+            if (!MenuCatalog.appliesTo(id, privacy, settings.userScripts)) continue
             val title = when (id) {
                 "bookmark" -> getString(if (bookmarked) R.string.remove_bookmark else R.string.add_bookmark)
                 else -> getString(MenuCatalog.labelRes(id))
@@ -586,7 +740,8 @@ open class BrowserActivity : Activity(), Tabs.Listener {
                 "history" -> showHistory()
                 "find" -> showFind()
                 "share" -> sharePage()
-                "downloads" -> DownloadQueue.showAll(this)
+                "downloads" -> DownloadsPanel.show(this).show()
+                "script_commands" -> showScriptCommands()
                 "desktop" -> tabs.setDesktopSite(!tabs.isDesktopSite)
                 "customize" -> MenuPanel.show(this, settings) {}.show()
                 "settings" -> showSettings()
@@ -673,9 +828,69 @@ open class BrowserActivity : Activity(), Tabs.Listener {
     private fun showSettings() {
         val shelf = store ?: return
         SettingsPanel.show(this, settings, shelf) {
+            // The preferences that live on a WebView — script, images, text size,
+            // Safe Browsing, userscripts — are re-applied to every open tab, and
+            // the address bar's suggestions come or go with their setting.
+            tabs.refreshSettings()
+            address.setAdapter(
+                if (settings.suggestFromHistory && privacy.suggestsFromHistory) {
+                    SuggestionAdapter(this, shelf)
+                } else {
+                    null
+                },
+            )
             // The home page or the engine may have moved; nothing on screen
             // depends on either until the next tap, so there is nothing to redraw.
         }.show()
+    }
+
+    // --- userscript commands -------------------------------------------------
+
+    /**
+     * What the scripts running on this page have registered, and running one.
+     *
+     * A userscript's settings usually live behind `GM_registerMenuCommand`,
+     * which in a manager puts an entry in the extension's menu. There is no
+     * extension menu here, so the page is asked what it registered and the
+     * answer becomes this list — which is the only way a bundled script's own
+     * configuration is reachable.
+     *
+     * The commands belong to the page, so the list is read fresh each time it is
+     * opened rather than remembered: a script that has not run yet on this
+     * document has registered nothing yet.
+     */
+    private fun showScriptCommands() {
+        val view = tabs.current()
+        if (view == null) {
+            Toast.makeText(this, R.string.script_commands_none, Toast.LENGTH_SHORT).show()
+            return
+        }
+        view.evaluateJavascript(UserScriptCommands.LIST) { reply ->
+            val commands = UserScriptCommands.parse(reply)
+            if (commands.isEmpty()) {
+                Toast.makeText(this, R.string.script_commands_none, Toast.LENGTH_LONG).show()
+                return@evaluateJavascript
+            }
+            val labels = commands.map { command ->
+                if (command.script.isEmpty()) command.caption else command.caption + "  ·  " + command.script
+            }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle(R.string.script_commands)
+                .setItems(labels) { _, which ->
+                    val chosen = commands.getOrNull(which) ?: return@setItems
+                    // The page may have navigated between the two calls, in which
+                    // case the list is gone and so is the command; the reply says
+                    // so rather than the tap doing nothing.
+                    view.evaluateJavascript(UserScriptCommands.invoke(chosen.index)) { outcome ->
+                        val decoded = UserScriptCommands.decode(outcome.orEmpty())
+                        if (decoded != "ok") {
+                            Toast.makeText(this, R.string.script_command_failed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     // --- find in page --------------------------------------------------------
@@ -797,5 +1012,14 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
     private companion object {
         const val REQUEST_FILES = 1
+
+        /**
+         * How long the gate waits for tor before offering a way out.
+         *
+         * Generous: a first bootstrap on a slow connection genuinely takes a
+         * couple of minutes, and giving up early on a Tor window that would have
+         * worked is worse than waiting.
+         */
+        const val GATE_TIMEOUT_MS = 150_000L
     }
 }

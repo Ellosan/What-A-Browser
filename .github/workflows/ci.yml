@@ -36,11 +36,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --no-fail-fast
 
-      # The renderer runs headlessly, so a screenshot is a real smoke test.
-      - name: Render a page without a display
-        run: |
-          cargo run --release -- shot about:home --offline -o smoke.png
-          cargo run --release -- version
+      # The renderer has no binary to drive it now that the desktop app is
+      # gone, so the smoke test is the benchmark example: it builds a real page,
+      # rasterizes it at three sizes, and fails loudly if any of that panics.
+      - name: Render without a display
+        run: cargo run --release --example frame_bench -p wat-shell
 
   # The Android build is a different target, not a different codebase, so what
   # this really checks is that the platform-specific paths still compile and
@@ -121,35 +121,14 @@ jobs:
       - name: Test and build
         run: ./android-webview/build.sh release
 
-      # An APK that declares more than it needs is the failure worth catching
-      # here: this browser asks for INTERNET and nothing else.
-      - name: Check what it asks for
+      # The same checks the release workflow runs, on the same script: an APK
+      # that declares more than it needs, loads cleartext, shares a cookie jar
+      # between a private window and an ordinary one, or has lost tor for an
+      # architecture. All four are invisible from the outside once they regress.
+      - name: Check what is in it
         run: |
-          aapt2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
-          apk=$(find android-webview/app/build/outputs/apk/release -name '*.apk' | head -1)
-          permissions=$("$aapt2" dump badging "$apk" | grep "^uses-permission" || true)
-          echo "$permissions"
-          if [ "$(echo "$permissions" | wc -l)" -ne 1 ] || \
-             ! echo "$permissions" | grep -q "android.permission.INTERNET"; then
-              echo "the WebView browser should ask for INTERNET and nothing else" >&2
-              exit 1
-          fi
-          # Cleartext must stay off; a browser that loads http:// silently is the
-          # thing this app is meant not to be.
-          "$aapt2" dump xmltree --file AndroidManifest.xml "$apk" \
-              | grep -q "usesCleartextTraffic(0x010104ec)=false"
-
-          # Private windows are private *because* they run in their own process:
-          # Android's WebView keeps one cookie jar per process. Drop the process
-          # attribute and the window still says "Hiding cat" while sharing the
-          # ordinary window's cookies, which is the kind of regression nobody
-          # notices by using the app.
-          manifest=$("$aapt2" dump xmltree --file AndroidManifest.xml "$apk")
-          for process in ':cat' ':lion'; do
-              echo "$manifest" | grep -q "process(0x01010011)=\"$process\"" || {
-                  echo "the private window for $process must have a process of its own" >&2
-                  exit 1
-              }
+          for apk in android-webview/app/build/outputs/apk/release/*.apk; do
+              ./android-webview/verify-apk.sh "$apk"
           done
 
   lint:

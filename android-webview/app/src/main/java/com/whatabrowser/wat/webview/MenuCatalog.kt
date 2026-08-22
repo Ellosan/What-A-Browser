@@ -19,6 +19,7 @@ object MenuCatalog {
         "find" -> R.string.find_in_page
         "share" -> R.string.share_page
         "downloads" -> R.string.downloads
+        "script_commands" -> R.string.script_commands
         "desktop" -> R.string.desktop_site
         "customize" -> R.string.customize_menu
         "settings" -> R.string.settings
@@ -34,7 +35,10 @@ object MenuCatalog {
      * does not open further private windows, which is a way to lose track of how
      * many are open.
      */
-    fun appliesTo(id: String, privacy: PrivacyMode): Boolean = when (id) {
+    fun appliesTo(id: String, privacy: PrivacyMode, userScripts: Boolean = true): Boolean = when (id) {
+        // Nothing to list when scripts are switched off, and a menu item that
+        // only ever says "nothing here" is worse than no menu item.
+        "script_commands" -> userScripts
         "bookmark", "bookmarks", "history" -> !privacy.isPrivate
         "private_cat", "private_lion" -> !privacy.isPrivate
         // Settings live in the ordinary window. Preferences are one file, and

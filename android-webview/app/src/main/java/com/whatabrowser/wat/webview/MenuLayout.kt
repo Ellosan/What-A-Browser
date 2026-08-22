@@ -73,6 +73,7 @@ class MenuLayout private constructor(
             "find",
             "share",
             "downloads",
+            "script_commands",
             "desktop",
             "customize",
             "settings",

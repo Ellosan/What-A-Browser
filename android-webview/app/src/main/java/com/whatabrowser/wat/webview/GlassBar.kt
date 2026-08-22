@@ -9,9 +9,12 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.widget.LinearLayout
@@ -61,6 +64,9 @@ class GlassBar @JvmOverloads constructor(
         strokeWidth = GlassSurface.dp(context, GlassGeometry.borderWidth).coerceAtLeast(1f)
     }
     private val backdropPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val fadingPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val specularPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val touchPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val bounds = RectF()
     private var shape: Path = Path()
@@ -68,9 +74,36 @@ class GlassBar @JvmOverloads constructor(
     /** The blurred capture of whatever is behind this bar, or null before one. */
     var backdrop: Bitmap? = null
         set(value) {
+            // The one going out is kept for a moment and faded through, so a new
+            // capture arrives as a settle rather than as a flicker.
+            previous = field
+            previousAt = SystemClock.elapsedRealtime()
             field = value
             invalidate()
         }
+
+    private var previous: Bitmap? = null
+    private var previousAt = 0L
+
+    /**
+     * Where the light is, as -1..1 across the bar.
+     *
+     * Driven by [Tilt] from the accelerometer, so the highlight slides when the
+     * phone turns. This is most of what makes glass read as a surface rather than
+     * as a picture of one.
+     */
+    var light: Float = 0f
+        set(value) {
+            val clamped = value.coerceIn(-1f, 1f)
+            if (kotlin.math.abs(clamped - field) < 0.01f) return
+            field = clamped
+            buildSpecular()
+            invalidate()
+        }
+
+    private var touchX = 0f
+    private var touchY = 0f
+    private var touchAt = 0L
 
     var cornerRadius: Float = GlassSurface.dp(context, GlassGeometry.radiusLarge)
         set(value) {
@@ -104,6 +137,7 @@ class GlassBar @JvmOverloads constructor(
         shape = GlassShape.path(bounds, cornerRadius)
 
         val rim = palette.glassRim
+        buildSpecular()
         sheenPaint.shader = LinearGradient(
             0f,
             0f,
@@ -140,6 +174,46 @@ class GlassBar @JvmOverloads constructor(
         )
     }
 
+    /**
+     * The moving highlight: a soft band of light across the glass, positioned by
+     * how the phone is being held.
+     */
+    private fun buildSpecular() {
+        if (width == 0) return
+        val centre = width * (0.5f + light * 0.42f)
+        val reach = width * 0.28f
+        specularPaint.shader = LinearGradient(
+            centre - reach,
+            0f,
+            centre + reach,
+            height.toFloat(),
+            intArrayOf(
+                withAlpha(palette.glassRim, 0f),
+                withAlpha(palette.glassRim, 0.13f),
+                withAlpha(palette.glassRim, 0f),
+            ),
+            floatArrayOf(0f, 0.5f, 1f),
+            Shader.TileMode.CLAMP,
+        )
+    }
+
+    /**
+     * Glass that answers a touch.
+     *
+     * Apple's moves under a finger; this brightens where it was touched and
+     * settles back over [TOUCH_FADE_MS]. The event is only observed — it is never
+     * consumed — so the buttons underneath behave exactly as they did.
+     */
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            touchX = event.x
+            touchY = event.y
+            touchAt = SystemClock.elapsedRealtime()
+            invalidate()
+        }
+        return super.onInterceptTouchEvent(event)
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width == 0 || height == 0) return
@@ -147,19 +221,58 @@ class GlassBar @JvmOverloads constructor(
         val save = canvas.save()
         canvas.clipPath(shape)
 
+        val now = SystemClock.elapsedRealtime()
+        val fade = ((now - previousAt).toFloat() / CROSSFADE_MS).coerceIn(0f, 1f)
+
+        previous?.let { bitmap ->
+            if (fade >= 1f) {
+                previous = null
+            } else if (!bitmap.isRecycled) {
+                fadingPaint.alpha = ((1f - fade) * 255).toInt()
+                canvas.drawBitmap(bitmap, Rect(0, 0, bitmap.width, bitmap.height), bounds, fadingPaint)
+            }
+        }
         backdrop?.let { bitmap ->
             if (!bitmap.isRecycled) {
+                backdropPaint.alpha = if (previous == null) 255 else (fade * 255).toInt()
                 canvas.drawBitmap(bitmap, Rect(0, 0, bitmap.width, bitmap.height), bounds, backdropPaint)
             }
         }
         canvas.drawRect(bounds, tintPaint)
         canvas.drawRect(bounds, sheenPaint)
+        canvas.drawRect(bounds, specularPaint)
         canvas.drawRect(bounds, glowPaint)
+
+        // Where a finger landed, brightening and settling back.
+        val sinceTouch = now - touchAt
+        if (touchAt > 0L && sinceTouch < TOUCH_FADE_MS) {
+            val strength = 1f - sinceTouch.toFloat() / TOUCH_FADE_MS
+            val radius = height * (1.2f + (1f - strength))
+            touchPaint.shader = RadialGradient(
+                touchX,
+                touchY,
+                radius.coerceAtLeast(1f),
+                withAlpha(palette.glassRim, 0.18f * strength),
+                withAlpha(palette.glassRim, 0f),
+                Shader.TileMode.CLAMP,
+            )
+            canvas.drawRect(bounds, touchPaint)
+        }
         canvas.restoreToCount(save)
+
+        // Another frame is only asked for while something is actually moving.
+        if (fade < 1f || (touchAt > 0L && sinceTouch < TOUCH_FADE_MS)) postInvalidateOnAnimation()
 
         // The rim is drawn last and unclipped, so the stroke is not shaved in
         // half by its own clip.
         canvas.drawPath(shape, rimPaint)
+    }
+
+    private companion object {
+        /** Long enough to read as a settle, short enough not to look like a lag. */
+        const val CROSSFADE_MS = 220f
+
+        const val TOUCH_FADE_MS = 450L
     }
 
     private fun withAlpha(colour: Int, fraction: Float): Int = Color.argb(

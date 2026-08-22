@@ -68,32 +68,23 @@ things:
 
 ## The engine seam
 
-There are two, at different levels.
-
 `wat_engine::WebEngine` describes **one document**: address, title, scroll,
-hit-testing, and `frame() -> DisplayList`. `Page` implements it. It is a useful
-seam inside this engine, but it cannot be the seam between the browser and *any*
-engine, because a display list is this rasterizer's vocabulary — an engine built
-on WebRender has no way to produce one.
+hit-testing, and `frame() -> DisplayList`. `Page` implements it, and the shell
+draws whatever comes back.
 
-`wat_web::Engine` is the seam that does hold across engines. It describes a whole
-browsing session — tabs, navigation, input, viewport — and asks for painting in
-the one form any engine can manage:
+There used to be a second seam above it — a whole-session trait that a Servo
+backend also implemented, so that the desktop app could be switched between this
+engine and WebRender. Both it and the desktop app are gone. The trait existed to
+let one shell drive two engines; with the desktop shell removed there is one
+caller and one engine, and an abstraction with a single implementation is a layer
+to read through rather than a seam that holds. The PC browser is a Firefox fork
+now (`firefox/`), which shares no Rust with this at all.
 
-```rust
-fn paint(&self, canvas: &mut Canvas, area: Rect, corner_radius: f32, scale: f32);
-```
-
-The engine puts its pixels in a region of the target canvas and must not draw
-outside it, because the chrome is composited on top and the glass reads what is
-underneath. Two engines implement it: `wat_engine::WatEngine`, which replays a
-display list, and `wat_servo::ServoEngine`, which renders through WebRender into
-memory and blits the result. See [SERVO.md](SERVO.md).
-
-The other thing the seam settles is who owns the network. The shell used to hold
-a `Loader` and pass it into every navigation, which only worked because this
-engine's network layer is a small trait; an engine that brings its own stack
-cannot be driven that way. So the loader lives behind the seam now.
+A display list is this rasterizer's vocabulary, and that is the honest limit of
+`WebEngine`: an engine built on WebRender could never produce one. Should a
+second engine ever need to live inside this shell again, the seam it needs is a
+`paint(canvas, area, radius, scale)` — pixels into a region, nothing outside it,
+because the chrome is composited on top and the glass reads what is underneath.
 
 ## The scripting seam
 
@@ -162,7 +153,7 @@ ratio is applied once, at the very end, by scaling the finished display list —
 
 Scaling the font size rather than the glyph bitmaps is the point: text is
 rasterized at the size it will actually be drawn, so a 3× phone gets sharp text
-rather than a magnified 1× frame. `wat shot --scale 3` renders the same way
+rather than a magnified 1× frame. The `boot_bench` example renders the same way
 headlessly, which is how it is checked without a device.
 
 ## Theming

@@ -10,7 +10,7 @@ from the values below.
 wat theme list                       # what ships with the browser
 wat theme show liquid-glass > my.toml # start from the default
 wat --theme my.toml                  # use it
-wat shot about:home --theme my.toml -o preview.png   # see it without a window
+cargo run --release --example frame_bench -p wat-shell   # see it without a window
 ```
 
 `--theme` takes a preset name or a path to a `.toml` file. `--dark` and
