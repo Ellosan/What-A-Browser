@@ -18,7 +18,7 @@ An everyday browser, in about 2,000 lines of Kotlin:
 | **Tabs** | Up to 16, opened from links, `target="_blank"` and the switcher. A link opens next to the page it came from, not at the end of the strip |
 | **Address bar** | Search or address, with suggestions from bookmarks and history. Five search engines to choose from, all HTTPS |
 | **Bookmarks and history** | SQLite, one row per page, written off the main thread. History can be turned off entirely |
-| **Downloads** | Through the system download manager, with the file name sanitised first — see below |
+| **Downloads** | A downloads page in the browser, over the system download manager, with the file name sanitised first — see below |
 | **File uploads** | `<input type=file>`, through the document picker, which needs no storage permission |
 | **Find in page** | With a match counter |
 | **Share, copy, long-press menu** | Open in a new tab, copy, share or download a link |
@@ -27,7 +27,7 @@ An everyday browser, in about 2,000 lines of Kotlin:
 | **Page dialogs** | `alert`, `confirm`, `prompt` and "leave this page?", each naming the site that is asking |
 | **Settings** | Chrome's sections, and more privacy than Chrome offers — see below |
 | **Tracker blocking** | On by default, and a thing Chrome has no setting for at all |
-| **Userscripts** | Instead of extensions, which a WebView cannot host honestly |
+| **Userscripts** | Instead of extensions, which a WebView cannot host honestly. One ships with the browser, switched off |
 | **Private windows** | Hiding cat, and hiding lion with Tor bundled in the app — a process each, see below |
 | **History on the back button** | Held rather than tapped: the pages behind or ahead, as a list |
 | **A menu you arrange** | Which items appear and in what order |
@@ -189,6 +189,25 @@ platform's origin rules cannot express a path.
 name in the message: their point is issuing requests the page could not make
 itself, which is exactly the privilege page content does not get here.
 
+**A script's own settings are reachable.** `GM_registerMenuCommand` exists because
+a userscript manager is an extension with a toolbar to hang things off, and almost
+every script that calls it calls it once, to open its settings. The shim records
+each command on the page's own window; the menu's **Script commands** item reads
+that list back with `evaluateJavascript` and runs the one that is chosen. Without
+it a script's configuration would be code that can never be reached, which is a
+worse answer than not shipping the function at all. The traffic is one-way — the
+app asking the page a question — and there is still no JavaScript interface
+anywhere in this browser.
+
+**One script ships with the browser:** [Adv-Microslop](https://greasyfork.org/en/scripts/585569-adv-microslop),
+MIT, by Ellosan, in `assets/userscripts/`. It is copied to disk on first run and
+arrives **switched off**: someone else's code running on every page is a thing to
+opt into, even when the browser is what put it there. The copy has two of the
+upstream replacement pairs removed and is otherwise unchanged. Seeding happens
+once and only in the ordinary process — deleting it has to stick, and two
+processes writing the record of what has been offered is how a deleted script
+comes back.
+
 ### Downloads and the file name
 
 The name of a downloaded file is chosen by the server, in a header. A server that
@@ -204,6 +223,34 @@ Downloads folder, because writing to the shared one needs
 `WRITE_EXTERNAL_STORAGE` on Android 9 and below — a permission this browser does
 not ask for and will not start asking for to save a PDF. They still appear in the
 system's Downloads list.
+
+### The downloads page
+
+`DownloadsPanel` is the list, in the browser. Each row is what was downloaded,
+where it came from and how far along; a finished one opens on a tap, and holding
+any of them offers share, copy the address, try again, and delete. There is still
+a way out to the system's downloads app, as a button rather than as the whole
+feature.
+
+The list is the download manager's own, read through a cursor each time it is
+shown. There is deliberately no second copy in a database of ours: the manager
+keeps running when the browser is closed, and a mirror is how a row still says
+"downloading" three days later. While something is moving the list re-reads once
+a second, and it stops the moment the dialog is dismissed — a downloads screen
+that polls a list which cannot change is battery spent on nothing.
+
+Files are handed to other apps as the download manager's `content://` URI with a
+read grant attached, never as a path. Handing another app a `file://` path to a
+file it has no permission to read is how "nothing can open this" happens for a
+file that opens fine from the notification.
+
+The arithmetic lives in `DownloadList.kt`, away from Android, because it is the
+part that is wrong in most downloads screens: a total of `-1` is the manager
+saying the server never sent a length, and dividing by it is what shows 0% until
+a file finishes. Sizes are formatted without `String.format` so that a phone set
+to German does not render 1.5 KB as `1,5 KB`, which reads as a thousands
+separator. The status constants are copied from `DownloadManager` to keep the
+file a plain JVM one, and a test asserts the copies still equal the originals.
 
 ## Why the system WebView is more secure than a fork
 

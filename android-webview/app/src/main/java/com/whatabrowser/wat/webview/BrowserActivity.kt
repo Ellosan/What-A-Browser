@@ -708,7 +708,7 @@ open class BrowserActivity : Activity(), Tabs.Listener {
 
         val ids = mutableListOf<String>()
         for (id in layout.visible()) {
-            if (!MenuCatalog.appliesTo(id, privacy)) continue
+            if (!MenuCatalog.appliesTo(id, privacy, settings.userScripts)) continue
             val title = when (id) {
                 "bookmark" -> getString(if (bookmarked) R.string.remove_bookmark else R.string.add_bookmark)
                 else -> getString(MenuCatalog.labelRes(id))
@@ -740,7 +740,8 @@ open class BrowserActivity : Activity(), Tabs.Listener {
                 "history" -> showHistory()
                 "find" -> showFind()
                 "share" -> sharePage()
-                "downloads" -> DownloadQueue.showAll(this)
+                "downloads" -> DownloadsPanel.show(this).show()
+                "script_commands" -> showScriptCommands()
                 "desktop" -> tabs.setDesktopSite(!tabs.isDesktopSite)
                 "customize" -> MenuPanel.show(this, settings) {}.show()
                 "settings" -> showSettings()
@@ -841,6 +842,55 @@ open class BrowserActivity : Activity(), Tabs.Listener {
             // The home page or the engine may have moved; nothing on screen
             // depends on either until the next tap, so there is nothing to redraw.
         }.show()
+    }
+
+    // --- userscript commands -------------------------------------------------
+
+    /**
+     * What the scripts running on this page have registered, and running one.
+     *
+     * A userscript's settings usually live behind `GM_registerMenuCommand`,
+     * which in a manager puts an entry in the extension's menu. There is no
+     * extension menu here, so the page is asked what it registered and the
+     * answer becomes this list — which is the only way a bundled script's own
+     * configuration is reachable.
+     *
+     * The commands belong to the page, so the list is read fresh each time it is
+     * opened rather than remembered: a script that has not run yet on this
+     * document has registered nothing yet.
+     */
+    private fun showScriptCommands() {
+        val view = tabs.current()
+        if (view == null) {
+            Toast.makeText(this, R.string.script_commands_none, Toast.LENGTH_SHORT).show()
+            return
+        }
+        view.evaluateJavascript(UserScriptCommands.LIST) { reply ->
+            val commands = UserScriptCommands.parse(reply)
+            if (commands.isEmpty()) {
+                Toast.makeText(this, R.string.script_commands_none, Toast.LENGTH_LONG).show()
+                return@evaluateJavascript
+            }
+            val labels = commands.map { command ->
+                if (command.script.isEmpty()) command.caption else command.caption + "  ·  " + command.script
+            }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle(R.string.script_commands)
+                .setItems(labels) { _, which ->
+                    val chosen = commands.getOrNull(which) ?: return@setItems
+                    // The page may have navigated between the two calls, in which
+                    // case the list is gone and so is the command; the reply says
+                    // so rather than the tap doing nothing.
+                    view.evaluateJavascript(UserScriptCommands.invoke(chosen.index)) { outcome ->
+                        val decoded = UserScriptCommands.decode(outcome.orEmpty())
+                        if (decoded != "ok") {
+                            Toast.makeText(this, R.string.script_command_failed, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     // --- find in page --------------------------------------------------------

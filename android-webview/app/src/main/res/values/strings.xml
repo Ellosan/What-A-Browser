@@ -183,4 +183,25 @@
     <string name="ssl_untrusted">Not loaded: that certificate is not trusted</string>
     <string name="ssl_date">Not loaded: that certificate is not valid yet</string>
     <string name="ssl_generic">Not loaded: the secure connection could not be verified</string>
+    <!-- The downloads page -->
+    <string name="downloads_empty">Nothing has been downloaded yet.</string>
+    <string name="downloads_system">System downloads</string>
+    <string name="downloads_clear">Clear finished</string>
+    <string name="downloads_clear_ask">Delete %1$d finished downloads and their files?</string>
+    <string name="downloads_delete_files">Delete</string>
+    <string name="downloads_nothing_to_clear">Nothing finished to clear</string>
+    <string name="download_starting">Starting</string>
+    <string name="download_failed_because">Failed: %1$s</string>
+    <string name="download_gone">That file is no longer there</string>
+    <string name="download_no_opener">Nothing on this phone opens that kind of file</string>
+    <string name="download_retry">Try again</string>
+    <string name="download_cancel">Cancel download</string>
+    <string name="download_delete">Delete</string>
+    <string name="open">Open</string>
+    <string name="copy_address">Copy address</string>
+
+    <!-- Commands a userscript registered -->
+    <string name="script_commands">Script commands</string>
+    <string name="script_commands_none">No script on this page has anything to configure. Scripts register their settings when they run, so open a page one of them applies to.</string>
+    <string name="script_command_failed">That command could not run</string>
 </resources>

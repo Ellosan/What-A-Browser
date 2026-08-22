@@ -75,6 +75,13 @@ case "$(basename "$apk")" in
 esac
 echo "  architectures: $(echo "$abis" | tr '\n' ' ')"
 
+# The bundled userscript and the shim it needs. A script asset that failed to be
+# packaged is invisible: seeding just finds nothing and the browser ships without
+# the feature, with no error anywhere.
+grep -q "assets/userscript-prelude.js" <<<"$listing" || fail "the userscript shim is not in the APK"
+grep -q "assets/userscripts/adv-microslop.user.js" <<<"$listing" \
+    || fail "the bundled userscript is not in the APK"
+
 version=$("$aapt2" dump badging "$apk" | grep -oE "versionName='[^']*'" | cut -d"'" -f2)
 echo "  version: $version"
 echo "  OK"

@@ -92,13 +92,28 @@
         return found;
     };
 
-    // There is no browser menu a page can add to, so this records the commands
-    // and does nothing with them. Scripts call it for optional extras and carry
-    // on when it is a no-op; the alternative is failing outright.
+    // Commands land in a list on the window, and the browser menu reads it: the
+    // "Script commands" item lists what the page's scripts registered and calls
+    // the one that is chosen. This is how a script's own settings panel — which
+    // is nearly always what a registered command opens — is reachable at all in
+    // a browser with no extension toolbar.
+    //
+    // The list is per-document and dies with it, which is right: the commands
+    // belong to the scripts running on this page.
     window.GM_registerMenuCommand = function (caption, action) {
-        window.__watUserscriptMenu = window.__watUserscriptMenu || [];
-        window.__watUserscriptMenu.push({ caption: String(caption), action: action });
-        return window.__watUserscriptMenu.length - 1;
+        var menu = window.__watUserscriptMenu = window.__watUserscriptMenu || [];
+        var text = String(caption);
+        for (var i = 0; i < menu.length; i++) {
+            // A script re-registering on the same document — after a soft
+            // navigation, say — should replace its entry rather than add a
+            // second one with the same words on it.
+            if (menu[i].caption === text && menu[i].script === scriptName) {
+                menu[i].action = action;
+                return i;
+            }
+        }
+        menu.push({ caption: text, script: scriptName, action: action });
+        return menu.length - 1;
     };
 
     window.GM_unregisterMenuCommand = function () {};

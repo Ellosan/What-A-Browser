@@ -111,6 +111,42 @@ class UserScriptStore(context: Context) {
         }
     }
 
+    /**
+     * Copies the scripts that ship with the browser into the directory, once.
+     *
+     * "Once" is the whole design. A bundled script is a starting point, not a
+     * fixture: deleting it has to stick, and so does editing the toggle, so a
+     * seed that ran on every launch would undo both. The flag records that the
+     * file was offered, never that it is still there.
+     *
+     * Seeded scripts arrive switched off. Someone else's code running on every
+     * page is a thing to opt into, even when the browser is the one that put it
+     * on disk.
+     */
+    fun seedBundled(context: Context) {
+        val assets = context.assets
+        val names = runCatching { assets.list(BUNDLED)?.toList() }.getOrNull().orEmpty()
+        for (name in names) {
+            if (!name.endsWith(SUFFIX)) continue
+            val seeded = "seeded:$name"
+            if (prefs.getBoolean(seeded, false)) continue
+            val source = runCatching {
+                assets.open("$BUNDLED/$name").use { it.readBytes().decodeToString() }
+            }.getOrNull()
+            // The flag is set either way. An asset that will not parse will not
+            // parse on the next launch either, and retrying it forever would mean
+            // reading and discarding it on every cold start.
+            prefs.edit().putBoolean(seeded, true).apply()
+            val script = source?.let { UserScript.parse(it) } ?: continue
+            val file = File(directory, fileNameFor(script.name))
+            if (file.exists()) continue
+            runCatching {
+                file.writeText(source)
+                prefs.edit().putBoolean(file.name, false).apply()
+            }
+        }
+    }
+
     /** A file name that cannot leave the directory, from a name the script chose. */
     private fun fileNameFor(name: String): String {
         val safe = name.map { char ->
@@ -121,5 +157,6 @@ class UserScriptStore(context: Context) {
 
     private companion object {
         const val SUFFIX = ".user.js"
+        const val BUNDLED = "userscripts"
     }
 }
