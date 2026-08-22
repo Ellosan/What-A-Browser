@@ -107,6 +107,12 @@ and a test fails the build if a future version moves it — a name in a string i
 name that rots, and the failure it replaces was invisible until someone opened
 the window on a phone.
 
+**It has been run.** Hiding lion reached `duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion`
+on a phone running Android 10, at 0.2.0. A `.onion` address is worth more as
+evidence than any ordinary site would be: it has no entry in the public DNS and
+no route outside Tor, so a page that renders is a circuit that exists. Three
+releases of tor failing to start ended there.
+
 **When it fails.** A Tor window is the hardest thing here to diagnose: it runs in
 its own process, and until 0.1.4 it blocked screenshots from the moment it opened
 — so its own error message could not be photographed, which is a mistake worth

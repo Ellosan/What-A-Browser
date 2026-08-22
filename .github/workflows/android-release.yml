@@ -290,9 +290,11 @@ jobs:
           # "WAT Android-v0.1.6 for Android" is how the first one came out.
           name: WAT ${{ needs.build.outputs.version }} for Android
           body_path: release/NOTES.md
-          # 0.x, and the Tor window has never run on a phone anyone has reported
-          # back from. Marked as a pre-release until it has.
-          prerelease: true
+          # The Tor window was confirmed working on a phone at 0.2.0 — Android
+          # 10, hiding lion, reaching DuckDuckGo's onion address, which is a
+          # thing that cannot resolve at all outside Tor. That was the one
+          # condition on the pre-release flag, so it comes off.
+          prerelease: false
           fail_on_unmatched_files: true
           files: |
             release/*.apk

@@ -35,6 +35,11 @@ an entry in a toolbar this browser does not have — so until now that
 configuration was code with no way to reach it. The new **Script commands** menu
 item lists what the scripts on the page registered and runs the one you pick.
 
+**Tor works.** Hiding lion was confirmed on a phone for the first time — Android
+10, reaching a `.onion` address, which has no entry in the public DNS and no
+route outside Tor, so a page that renders is a circuit that exists. This is the
+first release that is not marked as a pre-release.
+
 **The PC browser starts again, on Firefox.** The desktop build of WAT's own
 engine is gone: it rendered its own pages beautifully and could not open the real
 web, and shipping it as "the PC version" was not honest. The PC browser is now a
