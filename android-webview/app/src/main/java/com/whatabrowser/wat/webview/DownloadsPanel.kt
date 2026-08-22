@@ -177,28 +177,38 @@ object DownloadsPanel {
             val stamp = it.getColumnIndex(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP)
             while (it.moveToNext()) {
                 found += DownloadList.Entry(
-                    id = it.getLong(id),
+                    id = it.getLongOr(id, -1L),
                     title = it.getStringOrEmpty(title),
                     host = it.getStringOrEmpty(description),
-                    status = it.getInt(status),
-                    reason = it.getInt(reason),
-                    downloaded = it.getLong(soFar),
-                    total = it.getLong(total),
+                    status = it.getIntOr(status, DownloadList.FAILED),
+                    reason = it.getIntOr(reason, 0),
+                    downloaded = it.getLongOr(soFar, 0L),
+                    total = it.getLongOr(total, DownloadList.UNKNOWN_SIZE),
                     mimeType = it.getStringOrNull(mime),
                     localUri = it.getStringOrNull(local),
                     sourceUrl = it.getStringOrNull(source),
-                    startedAt = it.getLong(stamp),
+                    startedAt = it.getLongOr(stamp, 0L),
                 )
             }
         }
         return DownloadList.order(found)
     }
 
+    // A column the download manager does not have comes back as index -1, and
+    // reading -1 out of a cursor throws. Every read goes through one of these,
+    // including the numbers: a manager that drops a column on some Android
+    // version should cost the row a field, not crash the list.
     private fun Cursor.getStringOrEmpty(column: Int): String =
         if (column < 0 || isNull(column)) "" else getString(column).orEmpty()
 
     private fun Cursor.getStringOrNull(column: Int): String? =
         if (column < 0 || isNull(column)) null else getString(column)
+
+    private fun Cursor.getIntOr(column: Int, fallback: Int): Int =
+        if (column < 0 || isNull(column)) fallback else getInt(column)
+
+    private fun Cursor.getLongOr(column: Int, fallback: Long): Long =
+        if (column < 0 || isNull(column)) fallback else getLong(column)
 
     /**
      * Opens a finished download.
@@ -335,14 +345,31 @@ object DownloadsPanel {
 
         private var rows: List<DownloadList.Entry> = emptyList()
 
+        /** What the rows said last time, so an unchanged list is left alone. */
+        private var shown: String? = null
+
         var onReloaded: (Int) -> Unit = {}
 
         fun entryAt(position: Int): DownloadList.Entry? = rows.getOrNull(position)
 
-        /** Re-reads the list. Answers whether anything in it is still moving. */
+        /**
+         * Re-reads the list. Answers whether anything in it is still moving.
+         *
+         * Redrawing only when something actually changed. This runs once a
+         * second while a download is going, and `notifyDataSetChanged` rebuilds
+         * every visible row — which, on a list nobody is touching, is a second
+         * of jank per second for no new information, and cancels a long press
+         * halfway through.
+         */
         fun reload(): Boolean {
             rows = entries(activity)
-            notifyDataSetChanged()
+            val state = rows.joinToString("|") {
+                "${it.id}:${it.status}:${it.reason}:${it.downloaded}:${it.total}"
+            }
+            if (state != shown) {
+                shown = state
+                notifyDataSetChanged()
+            }
             onReloaded(rows.size)
             return rows.any { it.isRunning }
         }
