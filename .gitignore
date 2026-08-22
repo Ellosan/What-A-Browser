@@ -32,5 +32,6 @@
 # A committed signing key is deliberate, so it is not ignored — but a keystore
 # left anywhere else is a private key in a repository by accident.
 *.jks
+*.jks.base64
 *.keystore
 !signing/release.jks

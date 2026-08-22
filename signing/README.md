@@ -8,8 +8,20 @@ There are two ways to give this repository one. The workflow prefers the first.
 
 ## The right way: repository secrets
 
-Add these four under **Settings → Secrets and variables → Actions → Repository
-secrets**:
+Run this, and it prints exactly what to paste:
+
+```sh
+./signing/make-key.sh
+```
+
+It makes the key outside the repository, generates a password rather than
+asking you to invent one, and writes the base64 out as a single line. It refuses
+to overwrite a keystore that already exists, because a signing key replaced by
+accident is every future release unable to install over the ones already on
+people's phones, and that cannot be undone.
+
+Then add these four under **Settings → Secrets and variables → Actions →
+Repository secrets**:
 
 | Secret | What goes in it |
 | --- | --- |
