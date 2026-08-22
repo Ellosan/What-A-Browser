@@ -313,7 +313,13 @@ object DownloadsPanel {
         }
         AlertDialog.Builder(activity)
             .setTitle(R.string.downloads_clear)
-            .setMessage(activity.getString(R.string.downloads_clear_ask, finished.size))
+            .setMessage(
+                activity.resources.getQuantityString(
+                    R.plurals.downloads_clear_ask,
+                    finished.size,
+                    finished.size,
+                ),
+            )
             .setPositiveButton(R.string.downloads_delete_files) { _, _ ->
                 for (entry in finished) remove(activity, entry)
                 adapter.reload()

@@ -187,7 +187,13 @@
     <string name="downloads_empty">Nothing has been downloaded yet.</string>
     <string name="downloads_system">System downloads</string>
     <string name="downloads_clear">Clear finished</string>
-    <string name="downloads_clear_ask">Delete %1$d finished downloads and their files?</string>
+    <!-- A plural, not a format string: "Delete 1 finished downloads" is how a
+         count in a sentence goes wrong, and the answer is one resource per
+         quantity rather than a cleverer sentence. -->
+    <plurals name="downloads_clear_ask">
+        <item quantity="one">Delete the finished download and its file?</item>
+        <item quantity="other">Delete %1$d finished downloads and their files?</item>
+    </plurals>
     <string name="downloads_delete_files">Delete</string>
     <string name="downloads_nothing_to_clear">Nothing finished to clear</string>
     <string name="download_starting">Starting</string>
