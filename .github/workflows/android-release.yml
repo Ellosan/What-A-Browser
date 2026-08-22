@@ -313,3 +313,34 @@ jobs:
           files: |
             release/*.apk
             release/SHA256SUMS
+
+      # An asset this run did not produce is an asset from a run that did
+      # something else, and it stays because uploading only replaces assets of
+      # the same name. That is how 0.2.0 ended up offering a debug-signed APK
+      # beside properly signed ones — a file whose whole purpose was to be
+      # installable when nothing else was, left sitting there after the release
+      # was signed, and installing it blocks every future update.
+      #
+      # A release is rebuilt in place here, so its assets should be exactly what
+      # the run that last built it produced.
+      - name: Remove assets this release no longer produces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls release > /tmp/produced.txt
+          if ! gh release view "${{ needs.build.outputs.tag }}" \
+                  --repo "$GITHUB_REPOSITORY" --json assets \
+                  --jq '.assets[].name' > /tmp/attached.txt; then
+              echo "no release to tidy"
+              exit 0
+          fi
+          while read -r asset; do
+              [ -n "$asset" ] || continue
+              if grep -qxF "$asset" /tmp/produced.txt; then
+                  echo "  keeping $asset"
+              else
+                  echo "  removing $asset, which this run did not produce"
+                  gh release delete-asset "${{ needs.build.outputs.tag }}" "$asset" \
+                      --repo "$GITHUB_REPOSITORY" --yes
+              fi
+          done < /tmp/attached.txt
