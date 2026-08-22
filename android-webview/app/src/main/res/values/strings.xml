@@ -145,10 +145,10 @@
 
     <!-- Userscripts -->
     <string name="userscripts_enabled">Run userscripts</string>
-    <string name="userscripts_detail">Userscripts instead of extensions. An extension is a program with power over the browser; a userscript is JavaScript that runs inside one page with that page\'s own privileges. A WebView cannot host the first honestly, and can host the second.</string>
+    <string name="userscripts_detail">Userscripts instead of extensions. An extension is a program with power over the browser; a userscript is JavaScript that runs inside one page with that page\'s own privileges. A WebView cannot host the first honestly, and can host the second. One comes with the browser, switched off: Adv-Microslop, by Ellosan. Turn userscripts on to use it.</string>
     <string name="manage_userscripts">Userscripts</string>
     <string name="installed_count">%1$d installed</string>
-    <string name="userscripts_note">A script runs on the sites its own @match lines name. Read those before installing something you did not write.</string>
+    <string name="userscripts_note">A script runs on the sites its own @match lines name. Read those before installing something you did not write. A script\'s own settings, if it has any, open from Script commands in the menu.</string>
     <string name="install_from_address">Install from an address</string>
     <string name="paste_a_script">Paste a script</string>
     <string name="userscript_address_hint">https://…/something.user.js</string>

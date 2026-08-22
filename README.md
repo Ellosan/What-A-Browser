@@ -233,14 +233,20 @@ system WebView and WAT's interface around it. Google patches
 the engine through Play, so it cannot fall behind the way a fork can. No
 extensions, and no engine control.
 
-It is an everyday browser: tabs, bookmarks, history, downloads, file uploads,
-find in page, sharing, desktop sites, fullscreen video and a settings screen in
-Chrome's shape with more privacy in it than Chrome offers — tracker blocking on
-by default, refuse-all-cookies, clear-everything-on-exit — and userscripts
-instead of extensions, since a WebView can host the second honestly and not the
-first. Only
-three tabs holding a live `WebView` at a time, because a phone with 4 GB in it
-cannot afford sixteen.
+It is an everyday browser: tabs, bookmarks, history, file uploads, find in page,
+sharing, desktop sites, fullscreen video and a settings screen in Chrome's shape
+with more privacy in it than Chrome offers — tracker blocking on by default,
+refuse-all-cookies, clear-everything-on-exit. Downloads have a page of their own,
+live while they run, with open, share, retry and delete on each. Only three tabs
+hold a live `WebView` at a time, because a phone with 4 GB in it cannot afford
+sixteen.
+
+Userscripts stand in for extensions, since a WebView can host the second
+honestly and not the first. One ships with the browser and arrives switched off —
+[Adv-Microslop](https://greasyfork.org/en/scripts/585569-adv-microslop) by
+Ellosan, MIT — and a script's own settings open from **Script commands** in the
+menu, which is the browser reading back what the page registered through
+`GM_registerMenuCommand`.
 
 Private browsing comes in two: **hiding cat**, which writes nothing down, and
 **hiding lion**, which is hiding cat with every request through Tor. Tor is

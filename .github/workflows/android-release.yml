@@ -197,6 +197,26 @@ jobs:
           sha256sum ./*.apk > SHA256SUMS
           ls -lh
 
+      # What this version added, from the file in the repository rather than
+      # from this workflow. Notes kept in a workflow are notes nobody edits
+      # while changing the app: 0.1.7 was published describing 0.1.2. A version
+      # with no section here does not get released.
+      - name: Take this version's notes from the repository
+        run: |
+          mkdir -p release
+          awk -v want="## $VERSION" '
+              $0 == want { copying = 1; next }
+              /^## / { copying = 0 }
+              copying { print }
+          ' android-webview/RELEASE_NOTES.md \
+              | sed -e '/./,$!d' > release/WHATS-IN-IT.md
+
+          if [ ! -s release/WHATS-IN-IT.md ]; then
+              echo "::error::android-webview/RELEASE_NOTES.md has no '## $VERSION' section" >&2
+              exit 1
+          fi
+          cat release/WHATS-IN-IT.md
+
       # Written here rather than in the release step so the notes can say what
       # actually happened in this run — signed or not, and with what in it.
       - name: Write the release notes
@@ -226,15 +246,18 @@ jobs:
             echo
             echo "### What is in it"
             echo
-            echo "Tabs, bookmarks, history, downloads, uploads, find in page, sharing, desktop sites, fullscreen video and settings. Two private modes: **hiding cat**, which writes nothing down, and **hiding lion**, which is hiding cat with every request through Tor — carried in the app, with nothing else to install. Each runs in its own process, because Android's WebView keeps one cookie jar per process."
+            cat release/WHATS-IN-IT.md
             echo
-            echo "The Tor window is **not the Tor Browser**: it hides where you are connecting from, not who is connecting. It says so before the first page, and refuses to open until check.torproject.org has confirmed it is going through Tor."
+            echo "Two private modes throughout: **hiding cat**, which writes nothing down, and **hiding lion**, which is hiding cat with every request through Tor — carried in the app, with nothing else to install. Each runs in its own process, because Android'"'"'s WebView keeps one cookie jar per process. The Tor window is **not the Tor Browser**: it hides where you are connecting from, not who is connecting. It says so before the first page, and refuses to open until check.torproject.org has confirmed it is going through Tor."
             echo
             echo "### Checked before publishing"
             echo
             echo "Every APK here passed \`verify-apk.sh\`: one permission (\`INTERNET\`) and no others, cleartext refused, a separate process for each private window, and a tor library for every architecture it claims to support. The unit tests ran before the build."
           } > release/NOTES.md
           cat release/NOTES.md
+
+      - name: Tidy up
+        run: rm -f release/WHATS-IN-IT.md
 
       - uses: actions/upload-artifact@v4
         with:
