@@ -20,6 +20,20 @@ to overwrite a keystore that already exists, because a signing key replaced by
 accident is every future release unable to install over the ones already on
 people's phones, and that cannot be undone.
 
+All four values are written to `<keystore>.secrets` as well as printed, so a
+terminal that scrolls away or gets cleared costs you nothing:
+
+```sh
+cat ~/wat-release.jks.secrets
+```
+
+That matters most for the password, which is the only value that exists nowhere
+else — the alias is fixed, and the base64 can be regenerated from the keystore
+at any time with `base64 -w0 ~/wat-release.jks`. If the password is genuinely
+lost, the keystore is scrap: delete it and run the script again, which is free
+if no release has been signed with it yet and costs every reader an uninstall
+if one has.
+
 Then add these four under **Settings → Secrets and variables → Actions →
 Repository secrets**:
 

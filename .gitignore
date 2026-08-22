@@ -33,5 +33,6 @@
 # left anywhere else is a private key in a repository by accident.
 *.jks
 *.jks.base64
+*.jks.secrets
 *.keystore
 !signing/release.jks

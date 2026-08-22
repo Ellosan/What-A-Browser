@@ -49,6 +49,13 @@ if [ -e "$keystore" ]; then
     echo "$keystore already exists. Move it aside first if you really mean to" >&2
     echo "make a new key — the old one is the only thing that can sign updates" >&2
     echo "over the releases already published with it." >&2
+    echo >&2
+    echo "Its secrets, if this script made it, are in:" >&2
+    echo "  $keystore.secrets" >&2
+    echo >&2
+    echo "If they are gone and no release has been signed with this key yet," >&2
+    echo "deleting it and running this again costs nothing. If one has, it" >&2
+    echo "costs every reader an uninstall, so be sure before you do." >&2
     exit 1
 fi
 
@@ -91,6 +98,31 @@ else
     encoded="$(base64 < "$keystore" | tr -d '\n')"
 fi
 
+# On disk before anything is printed to the screen.
+#
+# A terminal is not storage. It scrolls, it gets cleared, and the password is
+# the one value here that exists nowhere else — the alias is fixed, the base64
+# can be regenerated from the keystore, but a lost password makes the keystore
+# itself useless, and the refusal above then stands between you and a new one.
+# So the four values land in a file first, and the screen is a convenience.
+umask 077
+printf '%s' "$encoded" > "$keystore.base64"
+cat > "$keystore.secrets" <<EOF
+# The four repository secrets for $keystore, as of $(date -u '+%Y-%m-%d').
+# Settings > Secrets and variables > Actions > New repository secret.
+#
+# Keep this with the keystore, or delete it once the secrets are in GitHub —
+# but not before, and never both this and the keystore's only copy in one
+# place you might lose at once.
+
+ANDROID_KEY_ALIAS=$alias_name
+ANDROID_KEYSTORE_PASSWORD=$password
+ANDROID_KEY_PASSWORD=$password
+
+# ANDROID_KEYSTORE_BASE64 is the whole of $keystore.base64, on one line.
+EOF
+chmod 600 "$keystore.secrets" "$keystore.base64" "$keystore"
+
 echo
 echo "=============================================================="
 echo "Four secrets, at Settings > Secrets and variables > Actions >"
@@ -107,14 +139,19 @@ echo "ANDROID_KEY_PASSWORD"
 echo "$password"
 echo
 echo "ANDROID_KEYSTORE_BASE64"
-echo "  written to $keystore.base64 — paste the whole file, it is one line"
+echo "  the whole of $keystore.base64 — one line, select all of it"
 echo
-printf '%s' "$encoded" > "$keystore.base64"
 echo "=============================================================="
+echo
+echo "All four are also written to"
+echo "  $keystore.secrets"
+echo "so clearing this terminal costs you nothing. Read them back with:"
+echo "  cat '$keystore.secrets'"
 echo
 echo "Then keep $keystore somewhere you will still have it in five years,"
 echo "and keep the password with it. Losing either means no future release can"
 echo "install over this one: Android will refuse an update signed with a"
 echo "different key, and every reader has to uninstall and lose their data."
 echo
-echo "Neither file belongs in the repository, and by default neither is in it."
+echo "None of these three files belongs in the repository, and by default none"
+echo "of them is in it."
