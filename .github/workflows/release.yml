@@ -1,8 +1,12 @@
 name: Release
 
-# Tagging `v0.1.0` builds WAT for every supported platform and publishes the
-# archives. The workflow can also be started by hand to check that a build still
-# produces a working binary on every target without publishing anything.
+# Tagging `v0.1.0` builds the Android app on WAT's own engine and publishes the
+# APK. The workflow can also be started by hand to check the build still works
+# without publishing anything.
+#
+# There is no desktop matrix any more: the PC browser is a Firefox fork in
+# `firefox/`, which cannot be built on a hosted runner. The everyday Android
+# browser on the system WebView has its own workflow, `android-release.yml`.
 on:
   push:
     tags: ["v*"]
@@ -42,128 +46,6 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --no-fail-fast
 
-  build:
-    name: ${{ matrix.name }}
-    needs: check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - name: linux-aarch64
-            os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          # GitHub has retired the Intel macOS runners, so this one is
-          # cross-compiled from an Apple Silicon runner. The macOS SDK carries
-          # both architectures, so it is an ordinary build — the only thing lost
-          # is the ability to run the result here.
-          - name: macos-x86_64
-            os: macos-latest
-            target: x86_64-apple-darwin
-            cross: true
-          - name: macos-aarch64
-            os: macos-latest
-            target: aarch64-apple-darwin
-          - name: windows-x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
-      # winit needs the X11 and Wayland development headers to build the shell.
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev
-
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} --bin wat
-
-      # A binary that cannot render a page is not worth shipping, and the
-      # renderer is headless, so this runs on every runner including the ones
-      # with no display.
-      - name: Smoke test the binary
-        if: ${{ !matrix.cross }}
-        shell: bash
-        run: |
-          binary="target/${{ matrix.target }}/release/wat"
-          if [ "${{ runner.os }}" = "Windows" ]; then binary="$binary.exe"; fi
-          "$binary" version
-          "$binary" shot about:home --offline -o smoke.png
-          "$binary" render about:version --offline -o page.png
-          test -s smoke.png
-          test -s page.png
-
-      # A cross-compiled binary cannot be run on the host, so check that it is
-      # actually for the architecture it claims. Shipping an arm64 binary in the
-      # x86_64 archive is exactly the mistake this catches.
-      - name: Check the cross-compiled binary
-        if: ${{ matrix.cross }}
-        shell: bash
-        run: |
-          binary="target/${{ matrix.target }}/release/wat"
-          file "$binary"
-          file "$binary" | grep -q 'x86_64'
-
-      - name: Package
-        id: package
-        shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            version="${{ inputs.tag }}"
-            version="${version:-dev}"
-            version="${version#v}"
-          fi
-          staging="wat-$version-${{ matrix.name }}"
-          mkdir -p "$staging"
-          cp README.md LICENSE "$staging/"
-          # The bundled presets live with the crate that owns them.
-          cp -r crates/wat-theme/themes "$staging/"
-
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/wat.exe" "$staging/"
-            7z a "$staging.zip" "$staging"
-            echo "asset=$staging.zip" >> "$GITHUB_OUTPUT"
-          else
-            cp "target/${{ matrix.target }}/release/wat" "$staging/"
-            tar czf "$staging.tar.gz" "$staging"
-            echo "asset=$staging.tar.gz" >> "$GITHUB_OUTPUT"
-          fi
-
-      # A checksum next to each archive, so a download can be verified.
-      - name: Checksum
-        shell: bash
-        run: |
-          asset="${{ steps.package.outputs.asset }}"
-          if command -v sha256sum >/dev/null; then
-            sha256sum "$asset" > "$asset.sha256"
-          else
-            shasum -a 256 "$asset" > "$asset.sha256"
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.name }}
-          path: |
-            ${{ steps.package.outputs.asset }}
-            ${{ steps.package.outputs.asset }}.sha256
-          if-no-files-found: error
-
-  # The APK is built separately from the desktop matrix: it is one artifact
-  # covering four ABIs, and it needs the Android toolchain rather than a
-  # platform runner.
   android:
     name: Android APK
     needs: check
@@ -241,7 +123,7 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [build, android]
+    needs: [android]
     runs-on: ubuntu-latest
     # A manual run builds and checks everything but publishes nothing unless a
     # tag was named for it.
@@ -271,22 +153,18 @@ jobs:
             **What-A-Browser** — an independent browser engine written from
             scratch in Rust. Not Chromium, not Gecko, not WebKit.
 
-            Download the archive for your platform, unpack it, and run `wat`.
-            Verify a download against `SHA256SUMS` first if you like.
+            This release is the Android app built on WAT's own engine: no
+            WebView, no Java beyond a manifest, everything from the HTML parser
+            to the rasterizer is the Rust in `crates/`. It carries all four ABIs.
 
-            ```
-            wat                        # open the browser
-            wat about:home             # open a page
-            wat shot https://example.com -o page.png   # render headlessly
-            ```
+            The `.apk` is unsigned, so `adb install` it or sign it yourself —
+            see `docs/ANDROID.md`. Verify a download against `SHA256SUMS`.
 
-            The `themes/` directory in each archive holds the Liquid Glass
-            presets; point `wat --theme <file.toml>` at one, or at your own.
+            For the everyday browser on Android's system WebView, with tabs,
+            private windows and Tor, see the `Android-v*` releases.
 
-            **Android**: the `.apk` is unsigned, so `adb install` it or sign it
-            yourself — see `docs/ANDROID.md`. It carries all four ABIs.
+            There is no desktop build: the PC browser now lives in `firefox/` as
+            a Firefox fork, and it is scaffolding rather than a shipped binary.
           files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
             artifacts/*.apk
             artifacts/SHA256SUMS

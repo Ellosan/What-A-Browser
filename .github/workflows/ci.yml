@@ -36,11 +36,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --no-fail-fast
 
-      # The renderer runs headlessly, so a screenshot is a real smoke test.
-      - name: Render a page without a display
-        run: |
-          cargo run --release -- shot about:home --offline -o smoke.png
-          cargo run --release -- version
+      # The renderer has no binary to drive it now that the desktop app is
+      # gone, so the smoke test is the benchmark example: it builds a real page,
+      # rasterizes it at three sizes, and fails loudly if any of that panics.
+      - name: Render without a display
+        run: cargo run --release --example frame_bench -p wat-shell
 
   # The Android build is a different target, not a different codebase, so what
   # this really checks is that the platform-specific paths still compile and

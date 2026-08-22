@@ -1,0 +1,6 @@
+# The order patches apply in. Keep this short: every entry is a merge conflict
+# waiting for the next rebase.
+#
+# Neither of these is written yet — see README.md for what they have to touch.
+# 0001-liquid-glass-theme.patch
+# 0002-branding.patch

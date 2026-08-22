@@ -20,11 +20,12 @@ engine in this repository:
 
 ![A page using backdrop-filter, rendered by the engine](docs/images/glass-demo.png)
 
-## Desktop and mobile from one codebase
+## Two layouts from one codebase
 
-The chrome has two layouts and picks between them by window width, so the same
-binary is a desktop browser and a phone browser. Resize a desktop window past
-640px and it becomes the touch layout.
+The chrome has a desktop layout and a touch layout and picks between them by
+width, so the same engine draws both. It is the Android app that ships it now —
+the desktop application was removed, and the PC browser is a Firefox fork; see
+below.
 
 | Desktop, dark | Mobile, dark |
 | --- | --- |
@@ -37,46 +38,26 @@ Rust 1.82 or newer is the only prerequisite.
 ```sh
 git clone https://github.com/ellosan/what-a-browser
 cd what-a-browser
-cargo run --release
+cargo test --workspace          # 827 tests, no network required
+cargo run --release --example frame_bench -p wat-shell
 ```
 
-That opens a window. Everything the window does is also available headlessly,
-which is handy over SSH and essential in CI:
+There is no `wat` binary any more. The engine is a set of libraries, and the
+things that used to be CLI commands are examples that render to PNG:
 
 ```sh
-# Render a whole browser window to a PNG
-cargo run --release -- shot https://example.com -o example.png
+# A window, and how long a frame takes at three sizes
+cargo run --release --example frame_bench -p wat-shell
 
-# Render only the page
-cargo run --release -- render https://example.com -o page.png
+# A cold start, phone-sized, with boot-preview.png and boot-full.png written out
+cargo run --release --example boot_bench -p wat-shell
 
-# The phone layout, dark
-cargo run --release -- shot https://example.com --mobile --dark -o phone.png
-
-# Inspect what the engine built
-cargo run --release -- dom   https://example.com
-cargo run --release -- boxes https://example.com --width 480
-cargo run --release -- style https://example.com h1
-
-# Themes
-cargo run --release -- theme list
-cargo run --release -- theme show liquid-glass > my-theme.toml
-cargo run --release -- shot about:home --theme my-theme.toml -o custom.png
+# The launcher icons, drawn with the browser's own rasterizer
+cargo run --release --example app_icon -p wat-paint -- android-webview/app/src/main/res
 ```
 
-`wat help` lists every command and option.
-
-### Keyboard
-
-| Keys | Action |
-| --- | --- |
-| `Ctrl/Cmd + L`, `/` | Focus the address bar |
-| `Ctrl/Cmd + T` / `W` | New tab / close tab |
-| `Ctrl/Cmd + R`, `F5` | Reload |
-| `Ctrl/Cmd + ←` / `→` | Back / forward |
-| `Ctrl/Cmd + 1…9` | Select a tab |
-| `Ctrl/Cmd + D` | Switch between light and dark |
-| `Space`, `PgUp/PgDn`, `Home/End` | Scroll |
+To run the browser, build one of the apps: `android/` for WAT's own engine,
+`android-webview/` for the everyday browser, `firefox/` for the PC fork.
 
 ## Fully customizable
 
@@ -221,16 +202,29 @@ Being clear about this matters more than the feature list:
 | `wat-net` | URLs, schemes, resource loading, caching |
 | `wat-engine` | The pipeline, tabs, history, internal pages |
 | `wat-theme` | The theme model and the bundled presets |
-| `wat-web` | The seam between the interface and a web engine |
 | `wat-ui` | The adaptive Liquid Glass chrome |
 | `wat-shell` | Window and event loop, desktop and Android entry points, touch |
-| `wat-cli` | The `wat` binary |
-| `wat-servo` | The same interface on Servo's engine (outside the workspace) |
 
 ```sh
 cargo test --workspace   # 850+ tests, no network required
 cargo clippy --workspace --all-targets
 ```
+
+## The PC browser: a Firefox fork
+
+`firefox/` is where the desktop browser lives now. The one that used to be
+here — WAT's own engine in a winit window, driven by a `wat` binary — has been
+removed, and the PC story is a patched Firefox instead: Gecko and its sandbox,
+WAT's look, and none of the compatibility gap a from-scratch engine has on the
+real web.
+
+It is **scaffolding, not a build**: a version pin, the fetch/build/rebase
+scripts, a mozconfig with telemetry and crash reporting off, and an honest list
+of the patches that are not written yet. Same shape as `chromium/`, and the same
+warning applies — a fork's security is its rebase cadence and nothing else.
+
+Gecko has no embedding API, so a fork is the only thing "on Firefox" can mean.
+See [firefox/README.md](firefox/README.md).
 
 ## Android on the system WebView
 

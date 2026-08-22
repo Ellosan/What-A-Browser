@@ -1,0 +1,24 @@
+# The build configuration for the WAT fork.
+#
+# Two kinds of line here. The first turns Firefox into a fork: official branding
+# off, so this cannot be mistaken for Mozilla's build, and WAT's own branding on.
+# The second takes out what a browser does not need to do to the person using it.
+
+ac_add_options --enable-application=browser
+ac_add_options --enable-optimize
+ac_add_options --disable-debug
+
+# A fork may not ship as Firefox or carry Mozilla's marks.
+ac_add_options --with-branding=browser/branding/unofficial
+export MOZ_APP_DISPLAYNAME="WAT"
+
+# Nothing reports on the reader.
+ac_add_options --disable-telemetry
+ac_add_options --disable-crashreporter
+ac_add_options --disable-updater
+
+# Keep the sandbox. It is most of what a fork inherits and the first thing a
+# careless mozconfig disables.
+ac_add_options --enable-sandbox
+
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/objdir-wat

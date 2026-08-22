@@ -88,7 +88,7 @@ The engine puts its pixels in a region of the target canvas and must not draw
 outside it, because the chrome is composited on top and the glass reads what is
 underneath. Two engines implement it: `wat_engine::WatEngine`, which replays a
 display list, and `wat_servo::ServoEngine`, which renders through WebRender into
-memory and blits the result. See [SERVO.md](SERVO.md).
+memory and blits the result.
 
 The other thing the seam settles is who owns the network. The shell used to hold
 a `Loader` and pass it into every navigation, which only worked because this
@@ -162,7 +162,7 @@ ratio is applied once, at the very end, by scaling the finished display list —
 
 Scaling the font size rather than the glyph bitmaps is the point: text is
 rasterized at the size it will actually be drawn, so a 3× phone gets sharp text
-rather than a magnified 1× frame. `wat shot --scale 3` renders the same way
+rather than a magnified 1× frame. The `boot_bench` example renders the same way
 headlessly, which is how it is checked without a device.
 
 ## Theming
